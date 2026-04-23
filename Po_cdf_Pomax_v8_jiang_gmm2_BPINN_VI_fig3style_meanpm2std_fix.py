@@ -179,16 +179,18 @@ def build_ieee33_case() -> GridCase:
     gen_buses = np.array([13, 18, 25, 33], dtype=int) - 1
     pg_min = np.array([0.00, 0.00, 0.00, 0.00], dtype=float)
     pg_max = np.array([0.45, 0.40, 0.90, 0.75], dtype=float)
-    qg_min = np.array([-0.20, -0.18, -0.40, -0.35], dtype=float)
-    qg_max = np.array([0.20, 0.18, 0.40, 0.35], dtype=float)
+    # keep Q ranges relatively loose in stage-1 to avoid over-filtering all samples
+    # when PCC reactive exchange is fixed to zero.
+    qg_min = np.array([-1.20, -1.00, -1.80, -1.50], dtype=float)
+    qg_max = np.array([1.20, 1.00, 1.80, 1.50], dtype=float)
 
     # stage-1 participation factors (switchable/configurable)
     part_p = pg_max / (pg_max.sum() + 1e-12)
     q_span = (qg_max - qg_min)
     part_q = q_span / (q_span.sum() + 1e-12)
 
-    fmax_p = np.full(n_br, 2.5, dtype=float)
-    fmax_q = np.full(n_br, 2.0, dtype=float)
+    fmax_p = np.full(n_br, 5.0, dtype=float)
+    fmax_q = np.full(n_br, 5.0, dtype=float)
 
     children, parent_branch, parent_bus, topo, rev = _build_radial_topology(n_bus, root, fb, tb)
 
@@ -319,6 +321,7 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
     np.random.seed(seed)
 
     feats, ys = [], []
+    dropped_scenarios = 0
     for s in range(num_scenarios):
         pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
         x = make_feature_vector(case, pd_mu, pr_mu)
@@ -345,9 +348,23 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
                 y_row.append(y)
 
         if len(y_row) < max(5, mc_per_scenario // 8):
+            # fallback-1: deterministic mean point
             y_fb = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_mu, qr_mu)
             if np.isfinite(y_fb):
                 y_row = [y_fb for _ in range(mc_per_scenario)]
+            else:
+                # fallback-2: progressively relax the sampled operating point (loads down, PV clipped)
+                for scale in [0.95, 0.90, 0.85, 0.80]:
+                    pd_try = pd_mu * scale
+                    qd_try = qd_mu * scale
+                    pr_cap = np.zeros(case.n_bus, dtype=float)
+                    pr_cap[case.pv_buses] = case.pv_pmax
+                    pr_try = np.minimum(pr_mu, pr_cap) * scale
+                    qr_try = pr_try * math.tan(math.acos(case.pv_pf))
+                    y_fb2 = solve_pomax_gurobi_33bus(case, pd_try, qd_try, pr_try, qr_try)
+                    if np.isfinite(y_fb2):
+                        y_row = [y_fb2 for _ in range(mc_per_scenario)]
+                        break
 
         if len(y_row) > 0:
             if len(y_row) < mc_per_scenario:
@@ -355,12 +372,21 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
                 y_row = y_row + fill.tolist()
             feats.append(x)
             ys.append(np.array(y_row[:mc_per_scenario], dtype=float))
+        else:
+            dropped_scenarios += 1
 
         if (s + 1) % 20 == 0:
             print(f"已生成 {s+1}/{num_scenarios} 场景")
 
+    if len(feats) == 0:
+        raise RuntimeError(
+            "数据集生成失败：所有场景均未获得可行 OPF 样本。"
+            "请检查 Gurobi 可用性、网络参数（特别是Q约束/PCC_Q设定）或放宽场景随机范围。"
+        )
+
     X = np.array(feats, dtype=float)
-    Y = np.array(ys, dtype=float)
+    Y = np.stack(ys, axis=0).astype(float)
+    print(f"[dataset] feasible_scenarios={len(feats)}/{num_scenarios}, dropped={dropped_scenarios}")
     return X, Y
 
 
@@ -577,6 +603,18 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, Y: np.ndarray):
     torch.manual_seed(SEED_TRAIN)
     np.random.seed(SEED_TRAIN)
 
+    if X.ndim != 2:
+        raise ValueError(f"X shape must be (N, d), got {X.shape}")
+    if Y.ndim != 2:
+        raise ValueError(
+            f"Y shape must be (N, M), got {Y.shape}. "
+            "这通常表示数据集阶段没有成功生成每个场景的 MC Pomax 样本。"
+        )
+    if X.shape[0] == 0 or Y.shape[0] == 0:
+        raise ValueError("空数据集：无法训练。请先检查数据生成可行性。")
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError(f"X/Y 场景数不一致: X={X.shape}, Y={Y.shape}")
+
     x_mean = X.mean(axis=0, keepdims=True)
     x_std = X.std(axis=0, keepdims=True) + 1e-9
     xn = (X - x_mean) / x_std
@@ -659,6 +697,9 @@ def eval_and_plot(case: GridCase, net: BayesGMM2Net, x_mean: np.ndarray, x_std: 
         y = solve_pomax_gurobi_33bus(case, pd, qd, pr, qr)
         if np.isfinite(y):
             y_list.append(y)
+
+    if len(y_list) == 0:
+        raise RuntimeError("评估场景下 MC baseline 全部不可行，无法绘制 CDF。请检查 case 参数与约束。")
 
     y_mc = np.array(y_list, dtype=float)
     y_mc.sort()
