@@ -2,6 +2,13 @@
 """
 Stage-1 extension: 3-bus VI-BPINN -> IEEE 33-bus single-period VI-BPINN.
 
+[DIAG VERSION: 3 / no fallback duplication]
+- Suspicion targeted: fallback single-value duplication may pollute scene->distribution supervision.
+- ONLY change vs baseline: dataset fallback policy (remove single-point fallback duplication; keep/drop by MC-valid count threshold).
+- Explicitly NOT changed here: training loop style, NUM_SCENARIOS, input features, VI strength, physics loss.
+- This version's only purpose is to check whether fallback label duplication distorts conditional distribution learning.
+
+
 Core kept from original script:
 - Bayesian NN (VI) + GMM-2 output
 - ELBO style training objective: NLL + lambda_phys * physics_loss + beta * KL/N
@@ -360,8 +367,14 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
     rng = np.random.default_rng(seed)
     np.random.seed(seed)
 
+    # diag3 policy: no single-value fallback duplication; keep scenario only if enough true MC-feasible samples.
+    min_valid_mc = 20
+
     feats, ys = [], []
+    valid_counts = []
+    pass_mc_enough = 0
     dropped_scenarios = 0
+
     for s in range(num_scenarios):
         pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
         x = make_feature_vector(case, pd_mu, pr_mu)
@@ -387,26 +400,9 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
             if np.isfinite(y):
                 y_row.append(y)
 
-        if len(y_row) < max(5, mc_per_scenario // 8):
-            # fallback-1: deterministic mean point
-            y_fb = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_mu, qr_mu)
-            if np.isfinite(y_fb):
-                y_row = [y_fb for _ in range(mc_per_scenario)]
-            else:
-                # fallback-2: progressively relax the sampled operating point (loads down, PV clipped)
-                for scale in [0.95, 0.90, 0.85, 0.80]:
-                    pd_try = pd_mu * scale
-                    qd_try = qd_mu * scale
-                    pr_cap = np.zeros(case.n_bus, dtype=float)
-                    pr_cap[case.pv_buses] = case.pv_pmax
-                    pr_try = np.minimum(pr_mu, pr_cap) * scale
-                    qr_try = pr_try * math.tan(math.acos(case.pv_pf))
-                    y_fb2 = solve_pomax_gurobi_33bus(case, pd_try, qd_try, pr_try, qr_try)
-                    if np.isfinite(y_fb2):
-                        y_row = [y_fb2 for _ in range(mc_per_scenario)]
-                        break
-
-        if len(y_row) > 0:
+        if len(y_row) >= min_valid_mc:
+            pass_mc_enough += 1
+            valid_counts.append(len(y_row))
             if len(y_row) < mc_per_scenario:
                 fill = rng.choice(y_row, size=mc_per_scenario - len(y_row), replace=True)
                 y_row = y_row + fill.tolist()
@@ -420,13 +416,22 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
 
     if len(feats) == 0:
         raise RuntimeError(
-            "数据集生成失败：所有场景均未获得可行 OPF 样本。"
-            "请检查 Gurobi 可用性、网络参数（特别是Q约束/PCC_Q设定）或放宽场景随机范围。"
+            "数据集生成失败：所有场景均未达到最小有效 MC 样本阈值。"
+            "请检查 Gurobi 可用性、网络参数或适度降低 min_valid_mc。"
         )
 
     X = np.array(feats, dtype=float)
     Y = np.stack(ys, axis=0).astype(float)
-    print(f"[dataset] feasible_scenarios={len(feats)}/{num_scenarios}, dropped={dropped_scenarios}")
+
+    valid_arr = np.array(valid_counts, dtype=float)
+    print(f"[diag3] total_scenarios={num_scenarios}")
+    print(f"[diag3] pass_mc_enough={pass_mc_enough}")
+    print(f"[diag3] dropped_insufficient={dropped_scenarios}")
+    print(f"[diag3] kept_scenarios={len(feats)}")
+    print(
+        "[diag3] valid_mc_count_stats "
+        f"min={int(valid_arr.min())} mean={valid_arr.mean():.2f} max={int(valid_arr.max())}"
+    )
     return X, Y
 
 

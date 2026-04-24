@@ -2,6 +2,16 @@
 """
 Stage-1 extension: 3-bus VI-BPINN -> IEEE 33-bus single-period VI-BPINN.
 
+[DIAG VERSION: 5 / diag1 + diag2 integrated optimization]
+- Purpose: validate whether "full-epoch mini-batch training + more independent scenarios"
+  can further reduce ARMS under the same physics/network model.
+- Compared with baseline, this version only changes:
+  (a) full-epoch mini-batch training,
+  (b) larger NUM_SCENARIOS coverage,
+  (c) moderately increased total training updates.
+- No methodological changes: no 24h/ESS/EV, no differentiable OPF layer,
+  no decision-recovery network, no GMM3+, no HMC/dropout.
+
 Core kept from original script:
 - Bayesian NN (VI) + GMM-2 output
 - ELBO style training objective: NLL + lambda_phys * physics_loss + beta * KL/N
@@ -42,11 +52,17 @@ except Exception as e:
 # =============================
 # 0) Hyperparameters
 # =============================
-NUM_SCENARIOS = 180
-MC_PER_SCENARIO = 60
+FAST_MODE = False
+if FAST_MODE:
+    NUM_SCENARIOS = 600
+    MC_PER_SCENARIO = 60
+    EPOCHS = 400
+else:
+    NUM_SCENARIOS = 1000
+    MC_PER_SCENARIO = 60
+    EPOCHS = 700
 
-EPOCHS = 1200
-BATCH_SIZE = 1024
+BATCH_SIZE = 2048
 LR = 1e-3
 LAM_PHYS = 0.08
 
@@ -57,6 +73,11 @@ INIT_RHO = -5.0
 TRAIN_WEIGHT_SAMPLES = 1
 EVAL_THETA_SAMPLES = 50
 RUN_SANITY_CHECKS = True
+RUN_MULTI_TEST = True
+N_TEST_SCENARIOS = 20
+MC_EVAL_MULTI = 800
+LOG_EVERY = 50
+VAL_RATIO = 0.10
 
 SEED_DATA = 0
 SEED_TRAIN = 0
@@ -426,7 +447,12 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
 
     X = np.array(feats, dtype=float)
     Y = np.stack(ys, axis=0).astype(float)
+    total_labels = num_scenarios * mc_per_scenario
+    flat_samples = X.shape[0] * Y.shape[1]
+    print(f"[dataset] NUM_SCENARIOS={num_scenarios}, MC_PER_SCENARIO={mc_per_scenario}, total_labels={total_labels}")
     print(f"[dataset] feasible_scenarios={len(feats)}/{num_scenarios}, dropped={dropped_scenarios}")
+    print(f"[dataset] X shape={X.shape}, Y shape={Y.shape}")
+    print(f"[dataset] flattened_train_samples={flat_samples}")
     return X, Y
 
 
@@ -753,54 +779,116 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, Y: np.ndarray):
     if X.shape[0] != Y.shape[0]:
         raise ValueError(f"X/Y 场景数不一致: X={X.shape}, Y={Y.shape}")
 
-    x_mean = X.mean(axis=0, keepdims=True)
-    x_std = X.std(axis=0, keepdims=True) + 1e-9
-    xn = (X - x_mean) / x_std
+    n_scen = X.shape[0]
+    n_val = max(1, int(round(VAL_RATIO * n_scen)))
+    n_train = n_scen - n_val
+    if n_train <= 0:
+        raise ValueError(f"样本场景数过小，无法划分 train/val。X shape={X.shape}")
 
-    N, M = Y.shape
-    x_flat = np.repeat(xn, M, axis=0)
-    y_flat = Y.reshape(-1, 1)
-    mask = np.isfinite(y_flat[:, 0])
-    x_flat, y_flat = x_flat[mask], y_flat[mask]
+    scen_idx = rng.permutation(n_scen)
+    tr_idx = scen_idx[:n_train]
+    va_idx = scen_idx[n_train:]
+    X_tr, Y_tr = X[tr_idx], Y[tr_idx]
+    X_va, Y_va = X[va_idx], Y[va_idx]
 
-    xt = torch.tensor(x_flat, dtype=torch.float32, device=DEVICE)
-    yt = torch.tensor(y_flat, dtype=torch.float32, device=DEVICE)
+    x_mean = X_tr.mean(axis=0, keepdims=True)
+    x_std = X_tr.std(axis=0, keepdims=True) + 1e-9
+
+    def flatten_xy(x_raw: np.ndarray, y_raw: np.ndarray):
+        xn_local = (x_raw - x_mean) / x_std
+        _, m_local = y_raw.shape
+        x_flat_local = np.repeat(xn_local, m_local, axis=0)
+        y_flat_local = y_raw.reshape(-1, 1)
+        mask_local = np.isfinite(y_flat_local[:, 0])
+        return x_flat_local[mask_local], y_flat_local[mask_local]
+
+    x_tr_flat, y_tr_flat = flatten_xy(X_tr, Y_tr)
+    x_va_flat, y_va_flat = flatten_xy(X_va, Y_va)
+
+    xt = torch.tensor(x_tr_flat, dtype=torch.float32, device=DEVICE)
+    yt = torch.tensor(y_tr_flat, dtype=torch.float32, device=DEVICE)
+    xv = torch.tensor(x_va_flat, dtype=torch.float32, device=DEVICE)
+    yv = torch.tensor(y_va_flat, dtype=torch.float32, device=DEVICE)
     x_mean_t = torch.tensor(x_mean, dtype=torch.float32, device=DEVICE)
     x_std_t = torch.tensor(x_std, dtype=torch.float32, device=DEVICE)
 
     net = BayesGMM2Net(in_dim=X.shape[1], prior_sigma=PRIOR_SIGMA, init_rho=INIT_RHO).to(DEVICE)
     opt = torch.optim.Adam(net.parameters(), lr=LR)
     n_data = xt.shape[0]
+    if n_data == 0:
+        raise ValueError("训练集展平后样本数为 0。")
 
-    print("=== 开始训练 33-bus VI-BPINN ===")
+    eff_batch_size = BATCH_SIZE
+    if DEVICE == "cuda":
+        total_mem_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        if total_mem_gb < 10.0 and eff_batch_size > 1024:
+            eff_batch_size = 1024
+            print(f"[train] GPU memory {total_mem_gb:.1f} GB，自动降 batch_size 到 {eff_batch_size}")
+
+    n_batches = (n_data + eff_batch_size - 1) // eff_batch_size
+    total_steps = EPOCHS * n_batches
+    print("=== 开始训练 33-bus VI-BPINN (diag5: full-epoch + more scenarios) ===")
+    print(f"[split] train_scenarios={X_tr.shape[0]}, val_scenarios={X_va.shape[0]}")
+    print(f"[split] train_flat={xt.shape[0]}, val_flat={xv.shape[0]}")
+    print(f"[train] n_data={n_data}, batch_size={eff_batch_size}, n_batches_per_epoch={n_batches}, total_update_steps={total_steps}")
+
     for ep in range(EPOCHS):
-        idx = rng.integers(0, n_data, size=BATCH_SIZE)
-        xb, yb = xt[idx], yt[idx]
+        perm = rng.permutation(n_data)
         beta = BETA_KL_MAX * min(1.0, (ep + 1) / max(1, KL_WARMUP_EPOCHS))
+        ep_loss, ep_nll, ep_phys, ep_kl = 0.0, 0.0, 0.0, 0.0
 
-        nll_acc = 0.0
-        phys_acc = 0.0
-        for _ in range(TRAIN_WEIGHT_SAMPLES):
-            w, mu1, s1, mu2, s2 = net(xb, sample=True)
-            nll = (-gmm2_log_prob(yb, w, mu1, s1, mu2, s2)).mean()
-            mu_mix = w[:, 0:1] * mu1 + w[:, 1:2] * mu2
-            x_raw = xb * x_std_t + x_mean_t
-            phys = physics_loss_meanonly(case, x_raw, mu_mix)
-            nll_acc += nll
-            phys_acc += phys
+        for b in range(n_batches):
+            b0 = b * eff_batch_size
+            b1 = min((b + 1) * eff_batch_size, n_data)
+            idx = perm[b0:b1]
+            xb, yb = xt[idx], yt[idx]
 
-        nll = nll_acc / TRAIN_WEIGHT_SAMPLES
-        phys = phys_acc / TRAIN_WEIGHT_SAMPLES
-        kl = net.kl_divergence()
-        loss = nll + LAM_PHYS * phys + beta * kl / n_data
+            nll_acc = 0.0
+            phys_acc = 0.0
+            for _ in range(TRAIN_WEIGHT_SAMPLES):
+                w, mu1, s1, mu2, s2 = net(xb, sample=True)
+                nll = (-gmm2_log_prob(yb, w, mu1, s1, mu2, s2)).mean()
+                mu_mix = w[:, 0:1] * mu1 + w[:, 1:2] * mu2
+                x_raw = xb * x_std_t + x_mean_t
+                phys = physics_loss_meanonly(case, x_raw, mu_mix)
+                nll_acc += nll
+                phys_acc += phys
 
-        opt.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
-        opt.step()
+            nll = nll_acc / TRAIN_WEIGHT_SAMPLES
+            phys = phys_acc / TRAIN_WEIGHT_SAMPLES
+            kl = net.kl_divergence()
+            loss = nll + LAM_PHYS * phys + beta * kl / n_data
 
-        if (ep + 1) % 100 == 0:
-            print(f"Epoch {ep+1:4d} | loss={loss.item():.6f} nll={nll.item():.6f} phys={phys.item():.6f} kl/N={(kl/n_data).item():.6f}")
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
+            opt.step()
+
+            ep_loss += float(loss.detach().cpu())
+            ep_nll += float(nll.detach().cpu())
+            ep_phys += float(phys.detach().cpu())
+            ep_kl += float((kl / n_data).detach().cpu())
+
+        if ((ep + 1) % LOG_EVERY == 0) or (ep == 0) or (ep + 1 == EPOCHS):
+            msg = (
+                f"Epoch {ep+1:4d} | avg_loss={ep_loss/n_batches:.6f} "
+                f"avg_nll={ep_nll/n_batches:.6f} avg_phys={ep_phys/n_batches:.6f} "
+                f"avg_kl/N={ep_kl/n_batches:.6f} beta={beta:.4f} n_batches={n_batches}"
+            )
+            if xv.shape[0] > 0:
+                with torch.no_grad():
+                    wv, mu1v, s1v, mu2v, s2v = net(xv, sample=False)
+                    val_nll = (-gmm2_log_prob(yv, wv, mu1v, s1v, mu2v, s2v)).mean()
+                    mu_mix_v = wv[:, 0:1] * mu1v + wv[:, 1:2] * mu2v
+                    x_raw_v = xv * x_std_t + x_mean_t
+                    val_phys = physics_loss_meanonly(case, x_raw_v, mu_mix_v)
+                    kl_now = net.kl_divergence()
+                    val_total = val_nll + LAM_PHYS * val_phys + beta * kl_now / n_data
+                msg += (
+                    f" | val_loss={val_total.item():.6f} "
+                    f"val_nll={val_nll.item():.6f} val_phys={val_phys.item():.6f}"
+                )
+            print(msg)
 
     return net, x_mean, x_std
 
@@ -896,13 +984,88 @@ def eval_and_plot(case: GridCase, net: BayesGMM2Net, x_mean: np.ndarray, x_std: 
     plt.xlabel("P0 max (MW)")
     plt.ylabel("CDF")
     plt.ylim(-0.02, 1.02)
-    plt.title("IEEE 33-bus Pomax CDF (single-period, VI-BPINN GMM2)")
+    plt.title("IEEE 33-bus Pomax CDF — diag5 full-epoch + more scenarios")
     plt.legend(loc="upper left")
     plt.grid(False)
     plt.tight_layout()
-    out_png = "Pomax_CDF_33bus_stage1_VI_BPINN.png"
+    out_png = "Pomax_CDF_33bus_diag5_full_epoch_more_scenarios.png"
     plt.savefig(out_png, dpi=280, bbox_inches="tight")
     plt.show()
+    return arms
+
+
+def eval_multiple_test_scenarios(
+    case: GridCase,
+    net: BayesGMM2Net,
+    x_mean: np.ndarray,
+    x_std: np.ndarray,
+    n_scenarios: int = N_TEST_SCENARIOS,
+    mc_eval_multi: int = MC_EVAL_MULTI,
+):
+    rng = np.random.default_rng(SEED_EVAL + 1000)
+    arms_list = []
+    net.eval()
+
+    for s in range(n_scenarios):
+        pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
+        x = make_feature_vector(case, pd_mu, pr_mu)
+
+        y_list = []
+        std_pd = 0.10 * np.maximum(pd_mu, 1e-3)
+        std_pr = 0.12 * np.maximum(pr_mu, 1e-3)
+        for _ in range(mc_eval_multi):
+            pd = pd_mu.copy()
+            pr = pr_mu.copy()
+            for i in range(case.n_bus):
+                if pd_mu[i] > 1e-9:
+                    pd[i] = sample_trunc_normal(pd_mu[i], std_pd[i], lo=0.0, hi=None)
+            for k, b in enumerate(case.pv_buses):
+                pr[b] = sample_trunc_normal(pr_mu[b], std_pr[b], lo=0.0, hi=float(case.pv_pmax[k]))
+            qd = qd_mu * (pd / np.maximum(pd_mu, 1e-6))
+            qr = pr * math.tan(math.acos(case.pv_pf))
+            y = solve_pomax_gurobi_33bus(case, pd, qd, pr, qr)
+            if np.isfinite(y):
+                y_list.append(y)
+
+        if len(y_list) < 30:
+            print(f"[multi-eval] 场景{s+1}/{n_scenarios} 可行 MC 过少，跳过。")
+            continue
+
+        y_mc = np.array(y_list, dtype=float)
+        y_mc.sort()
+        z_min, z_max = float(y_mc.min()), float(y_mc.max())
+        z_grid = np.linspace(z_min - 0.2, z_max + 0.2, 500)
+        cdf_mc = np.searchsorted(y_mc, z_grid, side="right") / y_mc.size
+
+        x_n = (x.reshape(1, -1) - x_mean) / x_std
+        xt = torch.tensor(x_n, dtype=torch.float32, device=DEVICE)
+        cdf_samps = []
+        with torch.no_grad():
+            for _ in range(EVAL_THETA_SAMPLES):
+                w_t, mu1_t, s1_t, mu2_t, s2_t = net(xt, sample=True)
+                w = w_t.cpu().numpy().reshape(-1)
+                mu1 = float(mu1_t.cpu().numpy().reshape(-1)[0])
+                mu2 = float(mu2_t.cpu().numpy().reshape(-1)[0])
+                s1 = float(s1_t.cpu().numpy().reshape(-1)[0])
+                s2 = float(s2_t.cpu().numpy().reshape(-1)[0])
+                cdf_samps.append(gmm2_cdf(z_grid, w, mu1, s1, mu2, s2))
+
+        cdf_mean = np.mean(np.array(cdf_samps), axis=0)
+        arms = 100.0 * math.sqrt(np.mean((cdf_mean - cdf_mc) ** 2))
+        arms_list.append(arms)
+        print(f"[multi-eval] scenario={s+1:02d}/{n_scenarios}, ARMS={arms:.4f}%")
+
+    if len(arms_list) == 0:
+        print("[multi-eval] 无可用场景用于统计 ARMS。")
+        return
+
+    arms_arr = np.array(arms_list, dtype=float)
+    print("[multi-eval] ARMS summary over test scenarios:")
+    print(f"  mean   = {arms_arr.mean():.4f}%")
+    print(f"  median = {np.median(arms_arr):.4f}%")
+    print(f"  min    = {arms_arr.min():.4f}%")
+    print(f"  max    = {arms_arr.max():.4f}%")
+    print(f"  q90    = {np.quantile(arms_arr, 0.90):.4f}%")
 
 
 def main():
@@ -911,11 +1074,23 @@ def main():
         opf_sanity_check(case, n_samples=3, seed=SEED_DATA + 11)
         surrogate_sanity_check(case, n_samples=3, seed=SEED_DATA + 12)
     print("生成 33 节点训练数据...")
+    print(f"[config] FAST_MODE={FAST_MODE}")
+    print(f"[config] NUM_SCENARIOS={NUM_SCENARIOS}, MC_PER_SCENARIO={MC_PER_SCENARIO}, total_labels={NUM_SCENARIOS * MC_PER_SCENARIO}")
     X, Y = generate_dataset(case, NUM_SCENARIOS, MC_PER_SCENARIO, seed=SEED_DATA)
     print(f"Dataset: X={X.shape}, Y={Y.shape}")
+    print(f"Flattened samples before split = {X.shape[0] * Y.shape[1]}")
 
     net, x_mean, x_std = train_bayes_gmm2(case, X, Y)
     eval_and_plot(case, net, x_mean, x_std, mc_eval=2500)
+    if RUN_MULTI_TEST:
+        eval_multiple_test_scenarios(
+            case,
+            net,
+            x_mean,
+            x_std,
+            n_scenarios=N_TEST_SCENARIOS,
+            mc_eval_multi=MC_EVAL_MULTI,
+        )
 
 
 if __name__ == "__main__":

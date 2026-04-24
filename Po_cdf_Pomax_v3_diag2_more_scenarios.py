@@ -2,6 +2,13 @@
 """
 Stage-1 extension: 3-bus VI-BPINN -> IEEE 33-bus single-period VI-BPINN.
 
+[DIAG VERSION: 2 / more independent scenarios]
+- Suspicion targeted: independent scenario coverage is insufficient for high-dimensional conditioning input.
+- ONLY change vs baseline: increase NUM_SCENARIOS to improve scenario diversity coverage.
+- Explicitly NOT changed here: training loop style, fallback logic, input features, VI strength, physics loss.
+- This version's only purpose is to verify whether limited independent scenario coverage is the dominant CDF shift source.
+
+
 Core kept from original script:
 - Bayesian NN (VI) + GMM-2 output
 - ELBO style training objective: NLL + lambda_phys * physics_loss + beta * KL/N
@@ -42,7 +49,7 @@ except Exception as e:
 # =============================
 # 0) Hyperparameters
 # =============================
-NUM_SCENARIOS = 180
+NUM_SCENARIOS = 600
 MC_PER_SCENARIO = 60
 
 EPOCHS = 1200
@@ -427,6 +434,7 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
     X = np.array(feats, dtype=float)
     Y = np.stack(ys, axis=0).astype(float)
     print(f"[dataset] feasible_scenarios={len(feats)}/{num_scenarios}, dropped={dropped_scenarios}")
+    print(f"[dataset] training_samples={len(feats) * mc_per_scenario}")
     return X, Y
 
 

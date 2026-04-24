@@ -2,6 +2,13 @@
 """
 Stage-1 extension: 3-bus VI-BPINN -> IEEE 33-bus single-period VI-BPINN.
 
+[DIAG VERSION: 1 / full-epoch training]
+- Suspicion targeted: baseline training loop under-trains because each epoch updates on only one random batch.
+- ONLY change vs baseline: train loop uses full mini-batch traversal per epoch (shuffle + iterate all batches).
+- Explicitly NOT changed here: dataset generation, NUM_SCENARIOS/MC_PER_SCENARIO, fallback logic, VI strength, physics loss.
+- This version's only purpose is to verify whether insufficient optimization steps are the dominant CDF error source.
+
+
 Core kept from original script:
 - Bayesian NN (VI) + GMM-2 output
 - ELBO style training objective: NLL + lambda_phys * physics_loss + beta * KL/N
@@ -772,35 +779,50 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, Y: np.ndarray):
     opt = torch.optim.Adam(net.parameters(), lr=LR)
     n_data = xt.shape[0]
 
-    print("=== 开始训练 33-bus VI-BPINN ===")
+    print("=== 开始训练 33-bus VI-BPINN (diag1: full-epoch mini-batch) ===")
     for ep in range(EPOCHS):
-        idx = rng.integers(0, n_data, size=BATCH_SIZE)
-        xb, yb = xt[idx], yt[idx]
+        perm = rng.permutation(n_data)
         beta = BETA_KL_MAX * min(1.0, (ep + 1) / max(1, KL_WARMUP_EPOCHS))
+        n_batches = (n_data + BATCH_SIZE - 1) // BATCH_SIZE
 
-        nll_acc = 0.0
-        phys_acc = 0.0
-        for _ in range(TRAIN_WEIGHT_SAMPLES):
-            w, mu1, s1, mu2, s2 = net(xb, sample=True)
-            nll = (-gmm2_log_prob(yb, w, mu1, s1, mu2, s2)).mean()
-            mu_mix = w[:, 0:1] * mu1 + w[:, 1:2] * mu2
-            x_raw = xb * x_std_t + x_mean_t
-            phys = physics_loss_meanonly(case, x_raw, mu_mix)
-            nll_acc += nll
-            phys_acc += phys
+        ep_loss, ep_nll, ep_phys, ep_kl = 0.0, 0.0, 0.0, 0.0
+        for b in range(n_batches):
+            b0 = b * BATCH_SIZE
+            b1 = min((b + 1) * BATCH_SIZE, n_data)
+            idx = perm[b0:b1]
+            xb, yb = xt[idx], yt[idx]
 
-        nll = nll_acc / TRAIN_WEIGHT_SAMPLES
-        phys = phys_acc / TRAIN_WEIGHT_SAMPLES
-        kl = net.kl_divergence()
-        loss = nll + LAM_PHYS * phys + beta * kl / n_data
+            nll_acc = 0.0
+            phys_acc = 0.0
+            for _ in range(TRAIN_WEIGHT_SAMPLES):
+                w, mu1, s1, mu2, s2 = net(xb, sample=True)
+                nll = (-gmm2_log_prob(yb, w, mu1, s1, mu2, s2)).mean()
+                mu_mix = w[:, 0:1] * mu1 + w[:, 1:2] * mu2
+                x_raw = xb * x_std_t + x_mean_t
+                phys = physics_loss_meanonly(case, x_raw, mu_mix)
+                nll_acc += nll
+                phys_acc += phys
 
-        opt.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
-        opt.step()
+            nll = nll_acc / TRAIN_WEIGHT_SAMPLES
+            phys = phys_acc / TRAIN_WEIGHT_SAMPLES
+            kl = net.kl_divergence()
+            loss = nll + LAM_PHYS * phys + beta * kl / n_data
 
-        if (ep + 1) % 100 == 0:
-            print(f"Epoch {ep+1:4d} | loss={loss.item():.6f} nll={nll.item():.6f} phys={phys.item():.6f} kl/N={(kl/n_data).item():.6f}")
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)
+            opt.step()
+
+            ep_loss += float(loss.detach().cpu())
+            ep_nll += float(nll.detach().cpu())
+            ep_phys += float(phys.detach().cpu())
+            ep_kl += float((kl / n_data).detach().cpu())
+
+        print(
+            f"Epoch {ep+1:4d} | batches={n_batches:4d} "
+            f"| avg_loss={ep_loss/n_batches:.6f} avg_nll={ep_nll/n_batches:.6f} "
+            f"avg_phys={ep_phys/n_batches:.6f} avg_kl/N={ep_kl/n_batches:.6f}"
+        )
 
     return net, x_mean, x_std
 
