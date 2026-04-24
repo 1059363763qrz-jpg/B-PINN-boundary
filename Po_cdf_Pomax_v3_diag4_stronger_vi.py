@@ -2,6 +2,13 @@
 """
 Stage-1 extension: 3-bus VI-BPINN -> IEEE 33-bus single-period VI-BPINN.
 
+[DIAG VERSION: 4 / stronger VI estimation]
+- Suspicion targeted: current mean-field VI with single weight sample is too weak and causes posterior mean bias.
+- ONLY change vs baseline: strengthen VI estimation settings (more train/eval theta samples and longer KL warmup/training).
+- Explicitly NOT changed here: training loop style, NUM_SCENARIOS, fallback logic, input features, physics loss.
+- This version's only purpose is to verify whether weak VI estimation is the dominant CDF bias source.
+
+
 Core kept from original script:
 - Bayesian NN (VI) + GMM-2 output
 - ELBO style training objective: NLL + lambda_phys * physics_loss + beta * KL/N
@@ -45,17 +52,17 @@ except Exception as e:
 NUM_SCENARIOS = 180
 MC_PER_SCENARIO = 60
 
-EPOCHS = 1200
+EPOCHS = 2000
 BATCH_SIZE = 1024
 LR = 1e-3
 LAM_PHYS = 0.08
 
 PRIOR_SIGMA = 1.0
 BETA_KL_MAX = 1.0
-KL_WARMUP_EPOCHS = 500
+KL_WARMUP_EPOCHS = 900
 INIT_RHO = -5.0
-TRAIN_WEIGHT_SAMPLES = 1
-EVAL_THETA_SAMPLES = 50
+TRAIN_WEIGHT_SAMPLES = 4
+EVAL_THETA_SAMPLES = 100
 RUN_SANITY_CHECKS = True
 
 SEED_DATA = 0
@@ -772,7 +779,8 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, Y: np.ndarray):
     opt = torch.optim.Adam(net.parameters(), lr=LR)
     n_data = xt.shape[0]
 
-    print("=== 开始训练 33-bus VI-BPINN ===")
+    print("=== 开始训练 33-bus VI-BPINN (diag4: stronger VI) ===")
+    print(f"[diag4] TRAIN_WEIGHT_SAMPLES={TRAIN_WEIGHT_SAMPLES}, EVAL_THETA_SAMPLES={EVAL_THETA_SAMPLES}, KL_WARMUP_EPOCHS={KL_WARMUP_EPOCHS}, EPOCHS={EPOCHS}")
     for ep in range(EPOCHS):
         idx = rng.integers(0, n_data, size=BATCH_SIZE)
         xb, yb = xt[idx], yt[idx]
