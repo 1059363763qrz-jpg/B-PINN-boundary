@@ -56,6 +56,7 @@ KL_WARMUP_EPOCHS = 500
 INIT_RHO = -5.0
 TRAIN_WEIGHT_SAMPLES = 1
 EVAL_THETA_SAMPLES = 50
+RUN_SANITY_CHECKS = True
 
 SEED_DATA = 0
 SEED_TRAIN = 0
@@ -97,6 +98,8 @@ class GridCase:
     parent_bus: np.ndarray
     topo_order: List[int]
     rev_topo_order: List[int]
+    in_branches: List[List[int]]
+    out_branches: List[List[int]]
 
 
 def _build_radial_topology(n_bus: int, root: int, fb: np.ndarray, tb: np.ndarray):
@@ -120,7 +123,13 @@ def _build_radial_topology(n_bus: int, root: int, fb: np.ndarray, tb: np.ndarray
             stack.append(c)
 
     rev = topo[::-1]
-    return children, parent_branch, parent_bus, topo, rev
+    in_branches = [[] for _ in range(n_bus)]
+    out_branches = [[] for _ in range(n_bus)]
+    for l in range(n_br):
+        i, j = int(fb[l]), int(tb[l])
+        out_branches[i].append(l)
+        in_branches[j].append(l)
+    return children, parent_branch, parent_bus, topo, rev, in_branches, out_branches
 
 
 def build_ieee33_case() -> GridCase:
@@ -192,7 +201,7 @@ def build_ieee33_case() -> GridCase:
     fmax_p = np.full(n_br, 5.0, dtype=float)
     fmax_q = np.full(n_br, 5.0, dtype=float)
 
-    children, parent_branch, parent_bus, topo, rev = _build_radial_topology(n_bus, root, fb, tb)
+    children, parent_branch, parent_bus, topo, rev, in_branches, out_branches = _build_radial_topology(n_bus, root, fb, tb)
 
     return GridCase(
         n_bus=n_bus, root=root,
@@ -206,13 +215,22 @@ def build_ieee33_case() -> GridCase:
         part_p=part_p, part_q=part_q,
         children=children, parent_branch=parent_branch, parent_bus=parent_bus,
         topo_order=topo, rev_topo_order=rev,
+        in_branches=in_branches, out_branches=out_branches,
     )
 
 
 # =============================
 # 2) Generic OPF labeler (Gurobi)
 # =============================
-def solve_pomax_gurobi_33bus(case: GridCase, pd: np.ndarray, qd: np.ndarray, pr: np.ndarray, qr: np.ndarray) -> float:
+def solve_pomax_gurobi_33bus(case: GridCase, pd: np.ndarray, qd: np.ndarray, pr: np.ndarray, qr: np.ndarray, return_detail: bool = False):
+    """
+    Unified sign convention (used by both OPF and physics loss):
+    - Branch flow P_ij/Q_ij positive in from_bus -> to_bus direction.
+    - Nodal net injection pinj/qinj = generation + renewable - load.
+      Thus pinj>0 means net generation, pinj<0 means net load.
+    - PCC variable P0 is import from upstream grid into root bus.
+      Hence P0 = sum_{l in out(root)} P_l, and P0>0 means importing power.
+    """
     nb = case.n_bus
     nl = case.from_bus.size
 
@@ -235,16 +253,20 @@ def solve_pomax_gurobi_33bus(case: GridCase, pd: np.ndarray, qd: np.ndarray, pr:
 
     m.addConstr(V[case.root] == 1.0, name="slackV")
 
-    # PCC (bus-1 root): P(root->child sums) = -P0 ; Q at PCC fixed 0
-    root_out = [l for l in range(nl) if int(case.from_bus[l]) == case.root]
-    m.addConstr(gp.quicksum(P[l] for l in root_out) == -P0, name="pcc_p")
+    # PCC at root (bus-1): import active power from upstream.
+    root_out = case.out_branches[case.root]
+    m.addConstr(gp.quicksum(P[l] for l in root_out) == P0, name="pcc_p")
     m.addConstr(gp.quicksum(Q[l] for l in root_out) == 0.0, name="pcc_q0")
 
     bus_to_gen = {int(b): g for g, b in enumerate(case.gen_buses.tolist())}
 
     for i in range(nb):
-        in_br = [l for l in range(nl) if int(case.to_bus[l]) == i]
-        out_br = [l for l in range(nl) if int(case.from_bus[l]) == i]
+        # Important fix: root KCL is represented by PCC constraints, and should not
+        # be enforced again as a regular PQ bus KCL (otherwise P0 can be implicitly locked).
+        if i == case.root:
+            continue
+        in_br = case.in_branches[i]
+        out_br = case.out_branches[i]
 
         pg_i = Pg[bus_to_gen[i]] if i in bus_to_gen else 0.0
         qg_i = Qg[bus_to_gen[i]] if i in bus_to_gen else 0.0
@@ -252,8 +274,9 @@ def solve_pomax_gurobi_33bus(case: GridCase, pd: np.ndarray, qd: np.ndarray, pr:
         pinj = pg_i + float(pr[i]) - float(pd[i])
         qinj = qg_i + float(qr[i]) - float(qd[i])
 
-        m.addConstr(gp.quicksum(P[l] for l in out_br) - gp.quicksum(P[l] for l in in_br) == pinj, name=f"kcl_p_{i}")
-        m.addConstr(gp.quicksum(Q[l] for l in out_br) - gp.quicksum(Q[l] for l in in_br) == qinj, name=f"kcl_q_{i}")
+        # KCL: incoming - outgoing + net_injection = 0
+        m.addConstr(gp.quicksum(P[l] for l in in_br) - gp.quicksum(P[l] for l in out_br) + pinj == 0.0, name=f"kcl_p_{i}")
+        m.addConstr(gp.quicksum(Q[l] for l in in_br) - gp.quicksum(Q[l] for l in out_br) + qinj == 0.0, name=f"kcl_q_{i}")
 
     for l in range(nl):
         i = int(case.from_bus[l])
@@ -268,8 +291,25 @@ def solve_pomax_gurobi_33bus(case: GridCase, pd: np.ndarray, qd: np.ndarray, pr:
     m.optimize()
 
     if m.Status != GRB.OPTIMAL:
-        return float("nan")
-    return float(P0.X)
+        return float("nan") if not return_detail else {"ok": False}
+
+    if not return_detail:
+        return float(P0.X)
+
+    P_sol = np.array([P[l].X for l in range(nl)], dtype=float)
+    Q_sol = np.array([Q[l].X for l in range(nl)], dtype=float)
+    V_sol = np.array([V[i].X for i in range(nb)], dtype=float)
+    Pg_sol = np.array([Pg[g].X for g in range(len(case.gen_buses))], dtype=float)
+    Qg_sol = np.array([Qg[g].X for g in range(len(case.gen_buses))], dtype=float)
+    return {
+        "ok": True,
+        "P0": float(P0.X),
+        "P": P_sol,
+        "Q": Q_sol,
+        "V": V_sol,
+        "Pg": Pg_sol,
+        "Qg": Qg_sol,
+    }
 
 
 # =============================
@@ -419,13 +459,15 @@ def recover_surrogate_dispatch_and_flows(case: GridCase, x_raw: torch.Tensor, mu
     qd = pd * torch.tensor(ratio_qp, device=x_raw.device, dtype=x_raw.dtype).view(1, -1)
 
     # surrogate generator dispatch via participation factors + balance target from mu_p0
+    # Unified convention: P0 is import at PCC, so global active balance is:
+    #   P0 + sum_i(pinj_i) = 0  =>  sum(Pg) = sum(Pd)-sum(Pr)-P0
     total_pd = pd.sum(dim=1, keepdim=True)
     total_pr = pr.sum(dim=1, keepdim=True)
-    total_pg_need = total_pd - total_pr + mu_p0  # from P0 = total_pd - total_pr - total_pg
+    total_pg_need = total_pd - total_pr - mu_p0
 
     total_qd = qd.sum(dim=1, keepdim=True)
     total_qr = qr.sum(dim=1, keepdim=True)
-    total_qg_need = total_qd - total_qr  # PCC Q fixed to 0 in this stage
+    total_qg_need = total_qd - total_qr  # PCC Q fixed to 0 in this stage: sum(qinj)=0
 
     part_p = torch.tensor(case.part_p, device=x_raw.device, dtype=x_raw.dtype).view(1, -1)
     part_q = torch.tensor(case.part_q, device=x_raw.device, dtype=x_raw.dtype).view(1, -1)
@@ -440,7 +482,9 @@ def recover_surrogate_dispatch_and_flows(case: GridCase, x_raw: torch.Tensor, mu
     pinj[:, gen_b] += pg
     qinj[:, gen_b] += qg
 
-    # radial flow recovery: post-order accumulate subtree injections
+    # radial flow recovery: post-order accumulate subtree injections.
+    # For branch p->j with positive direction p->j:
+    #   P_pj = - (sum injections in subtree rooted at j)
     P = torch.zeros((B, nl), device=x_raw.device, dtype=x_raw.dtype)
     Q = torch.zeros((B, nl), device=x_raw.device, dtype=x_raw.dtype)
     sub_p = pinj.clone()
@@ -451,8 +495,8 @@ def recover_surrogate_dispatch_and_flows(case: GridCase, x_raw: torch.Tensor, mu
             continue
         l = int(case.parent_branch[j])
         p = int(case.parent_bus[j])
-        P[:, l] = sub_p[:, j]
-        Q[:, l] = sub_q[:, j]
+        P[:, l] = -sub_p[:, j]
+        Q[:, l] = -sub_q[:, j]
         sub_p[:, p] += sub_p[:, j]
         sub_q[:, p] += sub_q[:, j]
 
@@ -471,7 +515,7 @@ def recover_surrogate_dispatch_and_flows(case: GridCase, x_raw: torch.Tensor, mu
         _ = bus_pos[j]
         V[:, j] = V[:, p] - 2.0 * (r_t[l] * P[:, l] + x_t[l] * Q[:, l])
 
-    return {"pd": pd, "qd": qd, "pr": pr, "qr": qr, "pg": pg, "qg": qg, "P": P, "Q": Q, "V": V}
+    return {"pd": pd, "qd": qd, "pr": pr, "qr": qr, "pg": pg, "qg": qg, "pinj": pinj, "qinj": qinj, "P": P, "Q": Q, "V": V}
 
 
 def physics_loss_meanonly(case: GridCase, x_raw: torch.Tensor, mu_p0: torch.Tensor, alpha_phys: float = 1.0) -> torch.Tensor:
@@ -485,6 +529,8 @@ def physics_loss_meanonly(case: GridCase, x_raw: torch.Tensor, mu_p0: torch.Tens
     pg = rec["pg"]
     qg = rec["qg"]
     pr = rec["pr"]
+    pinj = rec["pinj"]
+    qinj = rec["qinj"]
 
     vmin2, vmax2 = case.vmin ** 2, case.vmax ** 2
     loss = loss + (relu(vmin2 - V) ** 2).mean() + (relu(V - vmax2) ** 2).mean()
@@ -506,13 +552,105 @@ def physics_loss_meanonly(case: GridCase, x_raw: torch.Tensor, mu_p0: torch.Tens
     pv_max = torch.tensor(case.pv_pmax, device=x_raw.device, dtype=x_raw.dtype).view(1, -1)
     loss = loss + (relu(rec["pr"][:, pv_idx] - pv_max) ** 2).mean()
 
-    # PCC active consistency (root outgoing equals -P0)
-    root_out = [l for l in range(case.from_bus.size) if int(case.from_bus[l]) == case.root]
+    # PCC consistency under unified sign: sum(root outgoing) == P0(import)
+    root_out = case.out_branches[case.root]
     pcc_out = rec["P"][:, root_out].sum(dim=1, keepdim=True)
-    loss = loss + ((pcc_out + mu_p0) ** 2).mean()
+    qcc_out = rec["Q"][:, root_out].sum(dim=1, keepdim=True)
+    loss = loss + ((pcc_out - mu_p0) ** 2).mean()
+
+    # Global balance consistency residuals
+    loss = loss + ((mu_p0 + pinj.sum(dim=1, keepdim=True)) ** 2).mean()
+    loss = loss + ((qinj.sum(dim=1, keepdim=True)) ** 2).mean()
+    loss = loss + (qcc_out ** 2).mean()
+
+    # Nodal KCL residual consistency (non-root)
+    kcl_p_res = []
+    kcl_q_res = []
+    for i in range(case.n_bus):
+        if i == case.root:
+            continue
+        in_br = case.in_branches[i]
+        out_br = case.out_branches[i]
+        kcl_p = rec["P"][:, in_br].sum(dim=1, keepdim=True) - rec["P"][:, out_br].sum(dim=1, keepdim=True) + pinj[:, i:i + 1]
+        kcl_q = rec["Q"][:, in_br].sum(dim=1, keepdim=True) - rec["Q"][:, out_br].sum(dim=1, keepdim=True) + qinj[:, i:i + 1]
+        kcl_p_res.append(kcl_p)
+        kcl_q_res.append(kcl_q)
+    kcl_p_res = torch.cat(kcl_p_res, dim=1)
+    kcl_q_res = torch.cat(kcl_q_res, dim=1)
+    loss = loss + (kcl_p_res ** 2).mean() + (kcl_q_res ** 2).mean()
 
     return alpha_phys * loss
 
+
+# =============================
+# 4.1) Physical diagnostics / sanity checks
+# =============================
+def _kcl_residuals_np(case: GridCase, P: np.ndarray, Q: np.ndarray, pinj: np.ndarray, qinj: np.ndarray):
+    max_p, max_q = 0.0, 0.0
+    for i in range(case.n_bus):
+        if i == case.root:
+            continue
+        p_res = P[case.in_branches[i]].sum() - P[case.out_branches[i]].sum() + pinj[i]
+        q_res = Q[case.in_branches[i]].sum() - Q[case.out_branches[i]].sum() + qinj[i]
+        max_p = max(max_p, abs(float(p_res)))
+        max_q = max(max_q, abs(float(q_res)))
+    return max_p, max_q
+
+
+def opf_sanity_check(case: GridCase, n_samples: int = 3, seed: int = 2026):
+    print("\\n=== OPF sanity check ===")
+    rng = np.random.default_rng(seed)
+    for k in range(n_samples):
+        pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
+        sol = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_mu, qr_mu, return_detail=True)
+        if not sol["ok"]:
+            print(f"[opf-check {k}] infeasible")
+            continue
+        pinj = pr_mu - pd_mu
+        qinj = qr_mu - qd_mu
+        for g, b in enumerate(case.gen_buses):
+            pinj[b] += sol["Pg"][g]
+            qinj[b] += sol["Qg"][g]
+        pcc_lhs = sol["P"][case.out_branches[case.root]].sum()
+        qcc_lhs = sol["Q"][case.out_branches[case.root]].sum()
+        kcl_p_max, kcl_q_max = _kcl_residuals_np(case, sol["P"], sol["Q"], pinj, qinj)
+        print(f"[opf-check {k}] P0={sol['P0']:.4f}, sumP_root_out={pcc_lhs:.4f}, PCC_err={pcc_lhs-sol['P0']:+.2e}, sumQ_root_out={qcc_lhs:+.2e}, maxKCL(P/Q)=({kcl_p_max:.2e},{kcl_q_max:.2e})")
+
+
+def surrogate_sanity_check(case: GridCase, n_samples: int = 3, seed: int = 7):
+    print("\\n=== Surrogate recovery sanity check ===")
+    rng = np.random.default_rng(seed)
+    for k in range(n_samples):
+        pd_mu, _, pr_mu, _ = sample_scenario_means(case, rng)
+        x = make_feature_vector(case, pd_mu, pr_mu).reshape(1, -1)
+        # heuristic mu_p0 proxy (positive import)
+        mu_p0 = np.array([[max(0.05, pd_mu.sum() - pr_mu.sum() - 0.4)]], dtype=float)
+        xt = torch.tensor(x, dtype=torch.float32)
+        p0t = torch.tensor(mu_p0, dtype=torch.float32)
+        rec = recover_surrogate_dispatch_and_flows(case, xt, p0t)
+
+        total_pd = float(rec["pd"].sum())
+        total_pr = float(rec["pr"].sum())
+        total_pg = float(rec["pg"].sum())
+        total_qd = float(rec["qd"].sum())
+        total_qr = float(rec["qr"].sum())
+        total_qg = float(rec["qg"].sum())
+        p_root = float(rec["P"][:, case.out_branches[case.root]].sum())
+        q_root = float(rec["Q"][:, case.out_branches[case.root]].sum())
+        v_min = float(rec["V"].min())
+        print(f"[sur-check {k}] Pbal: P0={mu_p0[0,0]:.4f}, Pg={total_pg:.4f}, Pd={total_pd:.4f}, Pr={total_pr:.4f}, root_out={p_root:.4f}")
+        print(f"             Qbal: Qg={total_qg:.4f}, Qd={total_qd:.4f}, Qr={total_qr:.4f}, rootQ={q_root:+.2e}, Vmin^2={v_min:.4f}")
+
+    # monotonicity debug: higher load -> lower pomax tendency (heuristic check)
+    pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
+    y0 = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_mu, qr_mu)
+    y_hi_load = solve_pomax_gurobi_33bus(case, pd_mu * 1.1, qd_mu * 1.1, pr_mu, qr_mu)
+    pv_cap = np.zeros(case.n_bus, dtype=float)
+    pv_cap[case.pv_buses] = case.pv_pmax
+    pr_hi = np.minimum(pr_mu * 1.2, pv_cap)
+    qr_hi = pr_hi * math.tan(math.acos(case.pv_pf))
+    y_hi_pv = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_hi, qr_hi)
+    print(f"[mono-check] base={y0:.4f}, high-load={y_hi_load:.4f}, high-pv={y_hi_pv:.4f} (expected: high-load <= base, high-pv >= base, not strict)")
 
 # =============================
 # 5) GMM2 utils
@@ -769,6 +907,9 @@ def eval_and_plot(case: GridCase, net: BayesGMM2Net, x_mean: np.ndarray, x_std: 
 
 def main():
     case = build_ieee33_case()
+    if RUN_SANITY_CHECKS:
+        opf_sanity_check(case, n_samples=3, seed=SEED_DATA + 11)
+        surrogate_sanity_check(case, n_samples=3, seed=SEED_DATA + 12)
     print("生成 33 节点训练数据...")
     X, Y = generate_dataset(case, NUM_SCENARIOS, MC_PER_SCENARIO, seed=SEED_DATA)
     print(f"Dataset: X={X.shape}, Y={Y.shape}")
