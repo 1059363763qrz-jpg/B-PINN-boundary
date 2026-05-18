@@ -1,17 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-v6 quantile-physics extension: IEEE 33-bus single-period VI-BPINN.
-
-Core:
-- keep Bayesian GMM-2 output for Pomax conditional distribution
-- keep OPF label generator solve_pomax_gurobi_33bus() and dataset generation
-- keep single-period LinDistFlow physics conventions and constraints
-- keep ELBO style objective: NLL + dispatch supervision + quantile physics + beta * KL/N
-
-v6 key:
-- replace mean-only physics with quantile-based physics over tau={0.05,0.25,0.50,0.75,0.95}
-- dispatch recovery is boundary-point conditioned: (x, z) -> Pg/Qg
-- OPF internal dispatch supervision is also conditioned by z=P0 label
+v7 quantile-random-active-diagnostics:
+IEEE 33-bus single-period VI-BPINN with:
+- Bayesian GMM-2 output for Pomax conditional distribution
+- boundary-point-conditioned dispatch recovery: (x,z)->Pg/Qg
+- fixed + random tau quantile physics during training
+- fixed tau validation/sanity/evaluation
+- active constraint pattern diagnostics for OPF labels
 """
 
 import math
@@ -52,12 +47,21 @@ LAM_DISPATCH_SUP = 0.05
 LAM_PG_SUP = 1.0
 LAM_QG_SUP = 0.5
 NORMALIZE_DISPATCH_SUP = True
-QUANTILE_TAUS = [0.05, 0.25, 0.50, 0.75, 0.95]
+FIXED_QUANTILE_TAUS = [0.05, 0.25, 0.50, 0.75, 0.95]
+QUANTILE_TAUS = FIXED_QUANTILE_TAUS  # backward compatibility
+USE_RANDOM_PHYS_TAUS = True
+N_RANDOM_PHYS_TAUS = 4
+RANDOM_TAU_COUNT = N_RANDOM_PHYS_TAUS
+RANDOM_TAU_LOW = 0.02
+RANDOM_TAU_HIGH = 0.98
 TAIL_WEIGHTED_PHYS = False
 DETACH_QUANTILE_Z = False
-RANDOM_TAU_COUNT = 3
-RANDOM_TAU_LOW = 0.05
-RANDOM_TAU_HIGH = 0.95
+ACTIVE_TOL_PG = 1e-4
+ACTIVE_TOL_QG = 1e-4
+ACTIVE_TOL_V = 1e-4
+ACTIVE_TOL_LINE = 1e-4
+ACTIVE_TOP_K = 10
+SAVE_ACTIVE_PATTERN_CSV = True
 
 PRIOR_SIGMA = 1.0
 BETA_KL_MAX = 1.0
@@ -352,6 +356,56 @@ def sample_scenario_means(case: GridCase, rng: np.random.Generator):
     return pd_mu, qd_mu, pr_mu, qr_mu
 
 
+def get_active_constraint_signature(
+    case,
+    sol,
+    tol_pg=ACTIVE_TOL_PG,
+    tol_qg=ACTIVE_TOL_QG,
+    tol_v=ACTIVE_TOL_V,
+    tol_line=ACTIVE_TOL_LINE,
+):
+    pg = np.asarray(sol["Pg"], dtype=float)
+    qg = np.asarray(sol["Qg"], dtype=float)
+    v = np.asarray(sol["V"], dtype=float)
+    p = np.asarray(sol["P"], dtype=float)
+    q = np.asarray(sol["Q"], dtype=float)
+    all_names, bits = [], []
+    for g in range(len(case.gen_buses)):
+        all_names.append(f"Pg_min_g{g}")
+        bits.append(1 if pg[g] <= case.pg_min[g] + tol_pg else 0)
+    for g in range(len(case.gen_buses)):
+        all_names.append(f"Pg_max_g{g}")
+        bits.append(1 if pg[g] >= case.pg_max[g] - tol_pg else 0)
+    for g in range(len(case.gen_buses)):
+        all_names.append(f"Qg_min_g{g}")
+        bits.append(1 if qg[g] <= case.qg_min[g] + tol_qg else 0)
+    for g in range(len(case.gen_buses)):
+        all_names.append(f"Qg_max_g{g}")
+        bits.append(1 if qg[g] >= case.qg_max[g] - tol_qg else 0)
+    vmin2, vmax2 = case.vmin ** 2, case.vmax ** 2
+    for i in range(case.n_bus):
+        all_names.append(f"Vmin_bus{i+1:02d}")
+        bits.append(1 if v[i] <= vmin2 + tol_v else 0)
+    for i in range(case.n_bus):
+        all_names.append(f"Vmax_bus{i+1:02d}")
+        bits.append(1 if v[i] >= vmax2 - tol_v else 0)
+    for l in range(case.from_bus.size):
+        all_names.append(f"Pline_pos_l{l:02d}")
+        bits.append(1 if p[l] >= case.fmax_p[l] - tol_line else 0)
+    for l in range(case.from_bus.size):
+        all_names.append(f"Pline_neg_l{l:02d}")
+        bits.append(1 if p[l] <= -case.fmax_p[l] + tol_line else 0)
+    for l in range(case.from_bus.size):
+        all_names.append(f"Qline_pos_l{l:02d}")
+        bits.append(1 if q[l] >= case.fmax_q[l] - tol_line else 0)
+    for l in range(case.from_bus.size):
+        all_names.append(f"Qline_neg_l{l:02d}")
+        bits.append(1 if q[l] <= -case.fmax_q[l] + tol_line else 0)
+    signature_tuple = tuple(int(b) for b in bits)
+    active_names = [n for n, b in zip(all_names, bits) if b == 1]
+    return signature_tuple, active_names, all_names
+
+
 def make_feature_vector(case: GridCase, pd_mu: np.ndarray, pr_mu: np.ndarray) -> np.ndarray:
     # stage-1 base feature: all load-P means + PV-P means + 2 aggregate features
     feat = np.concatenate([
@@ -367,90 +421,70 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
     np.random.seed(seed)
 
     feats, yp0s, ypgs, yqgs = [], [], [], []
-    dropped_scenarios = 0
-    active_pattern_counter: Dict[str, int] = {}
-
-    def _active_pattern_from_solution(sol: Dict[str, np.ndarray], tol: float = 1e-4) -> str:
-        pg = np.asarray(sol["Pg"], dtype=float)
-        qg = np.asarray(sol["Qg"], dtype=float)
-        v = np.asarray(sol["V"], dtype=float)
-        p = np.asarray(sol["P"], dtype=float)
-        q = np.asarray(sol["Q"], dtype=float)
-        pg_lo = np.where(pg <= case.pg_min + tol)[0].tolist()
-        pg_hi = np.where(pg >= case.pg_max - tol)[0].tolist()
-        qg_lo = np.where(qg <= case.qg_min + tol)[0].tolist()
-        qg_hi = np.where(qg >= case.qg_max - tol)[0].tolist()
-        v_lo = np.where(v <= case.vmin ** 2 + tol)[0].tolist()
-        v_hi = np.where(v >= case.vmax ** 2 - tol)[0].tolist()
-        lp = np.where(np.abs(p) >= case.fmax_p - tol)[0].tolist()
-        lq = np.where(np.abs(q) >= case.fmax_q - tol)[0].tolist()
-        return f"PgL{pg_lo}|PgU{pg_hi}|QgL{qg_lo}|QgU{qg_hi}|VL{v_lo}|VU{v_hi}|PL{lp}|QL{lq}"
+    active_records = []
+    all_active_names = None
     n_gen = len(case.gen_buses)
+    dropped_scenarios = 0
 
-    for s in range(num_scenarios):
+    for sidx in range(num_scenarios):
         pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
         x = make_feature_vector(case, pd_mu, pr_mu)
 
+        y_p0_row, y_pg_row, y_qg_row, active_row = [], [], [], []
         std_pd = 0.10 * np.maximum(pd_mu, 1e-3)
         std_pr = 0.12 * np.maximum(pr_mu, 1e-3)
 
-        y_p0_row = []
-        y_pg_row = []
-        y_qg_row = []
         for _ in range(mc_per_scenario):
-            pd = pd_mu.copy()
-            pr = pr_mu.copy()
+            pd = pd_mu.copy(); pr = pr_mu.copy()
             for i in range(case.n_bus):
                 if pd_mu[i] > 1e-9:
                     pd[i] = sample_trunc_normal(pd_mu[i], std_pd[i], lo=0.0, hi=None)
             for k, b in enumerate(case.pv_buses):
-                pr[b] = sample_trunc_normal(pr_mu[b], std_pr[b], lo=0.0, hi=float(case.pv_pmax[k]))
-
+                pr[b] = sample_trunc_normal(pr_mu[b], std_pr[k], lo=0.0, hi=float(case.pv_pmax[k]))
             qd = qd_mu * (pd / np.maximum(pd_mu, 1e-6))
-            tan_pv = math.tan(math.acos(case.pv_pf))
-            qr = pr * tan_pv
-
+            qr = pr * math.tan(math.acos(case.pv_pf))
             sol = solve_pomax_gurobi_33bus(case, pd, qd, pr, qr, return_detail=True)
             if sol["ok"]:
                 pg_sol = np.asarray(sol["Pg"], dtype=float).reshape(-1)
                 qg_sol = np.asarray(sol["Qg"], dtype=float).reshape(-1)
-                if pg_sol.size != n_gen or qg_sol.size != n_gen:
+                if pg_sol.shape[0] != n_gen or qg_sol.shape[0] != n_gen:
                     raise ValueError(f"OPF dispatch label shape mismatch: Pg={pg_sol.shape}, Qg={qg_sol.shape}, n_gen={n_gen}")
                 y_p0_row.append(float(sol["P0"]))
                 y_pg_row.append(pg_sol)
                 y_qg_row.append(qg_sol)
-                pkey = _active_pattern_from_solution(sol)
-                active_pattern_counter[pkey] = active_pattern_counter.get(pkey, 0) + 1
+                sig, anames, all_names = get_active_constraint_signature(case, sol)
+                all_active_names = all_names
+                active_row.append({"signature": sig, "active_names": anames})
 
-        if len(y_p0_row) < max(5, mc_per_scenario // 8):
-            # fallback-1: deterministic mean point, now also saving internal dispatch labels.
+        if len(y_p0_row) == 0:
             sol_fb = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_mu, qr_mu, return_detail=True)
             if sol_fb["ok"]:
                 pg_fb = np.asarray(sol_fb["Pg"], dtype=float).reshape(-1)
                 qg_fb = np.asarray(sol_fb["Qg"], dtype=float).reshape(-1)
+                sig, anames, all_names = get_active_constraint_signature(case, sol_fb)
+                all_active_names = all_names
                 y_p0_row = [float(sol_fb["P0"]) for _ in range(mc_per_scenario)]
                 y_pg_row = [pg_fb.copy() for _ in range(mc_per_scenario)]
                 y_qg_row = [qg_fb.copy() for _ in range(mc_per_scenario)]
-                pkey = _active_pattern_from_solution(sol_fb)
-                active_pattern_counter[pkey] = active_pattern_counter.get(pkey, 0) + mc_per_scenario
+                active_row = [{"signature": sig, "active_names": list(anames)} for _ in range(mc_per_scenario)]
             else:
-                # fallback-2: progressively relax the sampled operating point (loads down, PV clipped).
-                for scale in [0.95, 0.90, 0.85, 0.80]:
-                    pd_try = pd_mu * scale
-                    qd_try = qd_mu * scale
-                    pr_cap = np.zeros(case.n_bus, dtype=float)
-                    pr_cap[case.pv_buses] = case.pv_pmax
-                    pr_try = np.minimum(pr_mu, pr_cap) * scale
+                for _ in range(5):
+                    pd_try = pd_mu * rng.uniform(0.85, 1.15, size=case.n_bus)
+                    pr_try = pr_mu.copy()
+                    for k, b in enumerate(case.pv_buses):
+                        pr_try[b] = np.clip(pr_try[b] * rng.uniform(0.85, 1.15), 0.0, case.pv_pmax[k])
+                    qd_try = qd_mu * (pd_try / np.maximum(pd_mu, 1e-6))
                     qr_try = pr_try * math.tan(math.acos(case.pv_pf))
                     sol_fb2 = solve_pomax_gurobi_33bus(case, pd_try, qd_try, pr_try, qr_try, return_detail=True)
                     if sol_fb2["ok"]:
                         pg_fb2 = np.asarray(sol_fb2["Pg"], dtype=float).reshape(-1)
                         qg_fb2 = np.asarray(sol_fb2["Qg"], dtype=float).reshape(-1)
+                        sig, anames, all_names = get_active_constraint_signature(case, sol_fb2)
+                        all_active_names = all_names
                         y_p0_row = [float(sol_fb2["P0"]) for _ in range(mc_per_scenario)]
                         y_pg_row = [pg_fb2.copy() for _ in range(mc_per_scenario)]
                         y_qg_row = [qg_fb2.copy() for _ in range(mc_per_scenario)]
-                        pkey = _active_pattern_from_solution(sol_fb2)
-                        active_pattern_counter[pkey] = active_pattern_counter.get(pkey, 0) + mc_per_scenario
+                        active_row = [{"signature": sig, "active_names": list(anames)} for _ in range(mc_per_scenario)]
                         break
 
         if len(y_p0_row) > 0:
@@ -459,40 +493,76 @@ def generate_dataset(case: GridCase, num_scenarios=NUM_SCENARIOS, mc_per_scenari
                 y_p0_row += [y_p0_row[int(i)] for i in fill_idx]
                 y_pg_row += [np.asarray(y_pg_row[int(i)], dtype=float).copy() for i in fill_idx]
                 y_qg_row += [np.asarray(y_qg_row[int(i)], dtype=float).copy() for i in fill_idx]
+                active_row += [{"signature": active_row[int(i)]["signature"], "active_names": list(active_row[int(i)]["active_names"])} for i in fill_idx]
             feats.append(x)
             yp0s.append(np.array(y_p0_row[:mc_per_scenario], dtype=float))
             ypgs.append(np.stack(y_pg_row[:mc_per_scenario], axis=0).astype(float))
             yqgs.append(np.stack(y_qg_row[:mc_per_scenario], axis=0).astype(float))
+            active_records.extend(active_row[:mc_per_scenario])
         else:
             dropped_scenarios += 1
 
-        if (s + 1) % 20 == 0:
-            print(f"已生成 {s+1}/{num_scenarios} 场景")
+        if (sidx + 1) % 20 == 0:
+            print(f"已生成 {sidx+1}/{num_scenarios} 场景")
 
     if len(feats) == 0:
-        raise RuntimeError(
-            "数据集生成失败：所有场景均未获得可行 OPF 样本。"
-            "请检查 Gurobi 可用性、网络参数（特别是Q约束/PCC_Q设定）或放宽场景随机范围。"
-        )
+        raise RuntimeError("数据集生成失败：所有场景均未获得可行 OPF 样本。")
 
     X = np.array(feats, dtype=float)
     YP0 = np.stack(yp0s, axis=0).astype(float)
     YPG = np.stack(ypgs, axis=0).astype(float)
     YQG = np.stack(yqgs, axis=0).astype(float)
-    total_labels = num_scenarios * mc_per_scenario
-    flat_samples = X.shape[0] * YP0.shape[1]
-    print(f"[dataset] NUM_SCENARIOS={num_scenarios}, MC_PER_SCENARIO={mc_per_scenario}, total_labels={total_labels}")
     print(f"[dataset] feasible_scenarios={len(feats)}/{num_scenarios}, dropped={dropped_scenarios}")
     print(f"[dataset] X shape={X.shape}, YP0 shape={YP0.shape}, YPG shape={YPG.shape}, YQG shape={YQG.shape}")
-    print(f"[dataset] flattened_train_samples={flat_samples}")
-    print("[dataset] Pg label range:", np.nanmin(YPG), np.nanmax(YPG))
-    print("[dataset] Qg label range:", np.nanmin(YQG), np.nanmax(YQG))
-    if len(active_pattern_counter) > 0:
-        top_patterns = sorted(active_pattern_counter.items(), key=lambda kv: kv[1], reverse=True)[:10]
-        print(f"[dataset] active-patterns unique={len(active_pattern_counter)}")
-        for i, (k, c) in enumerate(top_patterns, start=1):
-            print(f"[dataset] active-pattern top{i:02d}: count={c}, pattern={k}")
-    return X, YP0, YPG, YQG
+    return X, YP0, YPG, YQG, active_records, all_active_names
+
+
+def summarize_active_patterns(active_records, all_names, top_k=ACTIVE_TOP_K):
+    if not active_records:
+        print("[active-pattern] WARNING: active_records is empty; skip summary.")
+        return
+    from collections import Counter
+    n = len(active_records)
+    pat_counter = Counter([r["signature"] for r in active_records])
+    print(f"[active-pattern] total_samples={n}, unique_patterns={len(pat_counter)}")
+    top = pat_counter.most_common(top_k)
+    sig2id = {}
+    rows_pat = []
+    for i, (sig, cnt) in enumerate(top, start=1):
+        sig2id[sig] = i
+        active_names = [all_names[j] for j, b in enumerate(sig) if b == 1] if all_names is not None else []
+        pct = 100.0 * cnt / max(1, n)
+        print(f"[active-pattern] top{i:02d}: count={cnt}, pct={pct:.2f}%, active={active_names}")
+        rows_pat.append((i, cnt, pct, ";".join(active_names)))
+    m = len(all_names) if all_names is not None else 0
+    single_counts = np.zeros(m, dtype=int)
+    for r in active_records:
+        sig = np.array(r["signature"], dtype=int)
+        single_counts += sig
+    order = np.argsort(-single_counts)[:top_k]
+    rows_single = []
+    for j in order:
+        rate = single_counts[j] / max(1, n)
+        print(f"[active-single] {all_names[j]}: count={single_counts[j]}, rate={rate:.4f}")
+        rows_single.append((all_names[j], int(single_counts[j]), float(rate)))
+    for pref in ["Pg_min_", "Pg_max_", "Qg_min_", "Qg_max_", "Vmin_", "Vmax_", "Pline_pos_", "Pline_neg_", "Qline_pos_", "Qline_neg_"]:
+        idx = [i for i, name in enumerate(all_names or []) if name.startswith(pref)]
+        if idx:
+            c = int(single_counts[idx].sum())
+            print(f"[active-group] {pref}: count={c}, rate={c/(len(idx)*max(1,n)):.4f}")
+    if SAVE_ACTIVE_PATTERN_CSV:
+        import csv
+        with open("active_constraint_patterns_v7.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["pattern_id", "count", "percentage", "active_names"])
+            for row in rows_pat:
+                w.writerow([row[0], row[1], f"{row[2]:.6f}", row[3]])
+        with open("active_constraint_single_rates_v7.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["constraint_name", "count", "active_rate"])
+            for row in rows_single:
+                w.writerow([row[0], row[1], f"{row[2]:.8f}"])
+
 
 
 # =============================
@@ -585,11 +655,13 @@ def recover_flows_from_dispatch_batch(
     }
 
 
-def _gmm_quantile_weights(device, dtype):
-    if TAIL_WEIGHTED_PHYS:
+def _gmm_quantile_weights(device, dtype, K=None):
+    if K is None:
+        K = len(FIXED_QUANTILE_TAUS)
+    if TAIL_WEIGHTED_PHYS and K == len(FIXED_QUANTILE_TAUS):
         w = torch.tensor([0.30, 0.15, 0.10, 0.15, 0.30], device=device, dtype=dtype)
     else:
-        w = torch.tensor([1.0 / len(QUANTILE_TAUS)] * len(QUANTILE_TAUS), device=device, dtype=dtype)
+        w = torch.full((K,), 1.0 / K, device=device, dtype=dtype)
     return w / w.sum()
 
 
@@ -681,7 +753,7 @@ def physics_loss_quantile(
         + kcl_weight * (((kcl_p_res ** 2).mean(dim=1, keepdim=True) + (kcl_q_res ** 2).mean(dim=1, keepdim=True)).reshape(B, K))
     )
     if tau_weights is None:
-        tau_weights = _gmm_quantile_weights(device, dtype)
+        tau_weights = _gmm_quantile_weights(device, dtype, K=K)
     tau_weights = tau_weights.view(1, K)
     loss = (per_sample * tau_weights).sum(dim=1).mean() * alpha_phys
 
@@ -825,29 +897,35 @@ def quantile_physics_sanity_check(case: GridCase, net, x_mean, x_std, p0_mean, p
         with torch.no_grad():
             h0 = net.encode(xt, sample=False)
             w, mu1, s1, mu2, s2 = net.gmm_head(h0, sample=False)
-            zq = gmm2_quantile_torch(w, mu1, s1, mu2, s2, QUANTILE_TAUS)
-            h = net.encode(xt, sample=False).repeat(len(QUANTILE_TAUS), 1)
+            taus_eval = make_physics_taus(training=False, device=xt.device, dtype=xt.dtype)
+            zq = gmm2_quantile_torch(w, mu1, s1, mu2, s2, taus_eval)
+            K = zq.shape[1]
+            h = net.encode(xt, sample=False).repeat(K, 1)
             pg, qg = net.recover_dispatch_from_h_z(h, zq.reshape(-1, 1), torch.tensor([[p0_mean]], device=DEVICE), torch.tensor([[p0_std]], device=DEVICE), sample=False)
-            rec = recover_flows_from_dispatch_batch(case, x_raw.repeat(len(QUANTILE_TAUS), 1), zq.reshape(-1, 1), pg, qg)
-            for k, tau in enumerate(QUANTILE_TAUS):
+            rec = recover_flows_from_dispatch_batch(case, x_raw.repeat(K, 1), zq.reshape(-1, 1), pg, qg)
+            pg_prev_vec, qg_prev_vec = None, None
+            for k, tau in enumerate(taus_eval.detach().cpu().numpy().tolist()):
                 pg_vec = pg[k].detach().cpu().numpy()
                 qg_vec = qg[k].detach().cpu().numpy()
+                if k > 0:
+                    dpg_l1 = np.linalg.norm(pg_vec - pg_prev_vec, ord=1)
+                    dqg_l1 = np.linalg.norm(qg_vec - qg_prev_vec, ord=1)
+                else:
+                    dpg_l1, dqg_l1 = np.nan, np.nan
                 root_out_p = float(rec["P"][k, case.out_branches[case.root]].sum().cpu())
                 pcc_p_res = root_out_p - float(zq[0, k].cpu())
                 global_p_res = float((zq[0, k] + rec["pinj"][k].sum()).cpu())
                 print(
-                    f"[q-check s{s} tau={tau:.2f}] "
-                    f"z={float(zq[0,k]):.4f}, "
+                    f"[q-check s{s} tau={tau:.2f}] z={float(zq[0,k]):.4f}, "
                     f"Pg={np.array2string(pg_vec, precision=4, suppress_small=True)}, "
                     f"Qg={np.array2string(qg_vec, precision=4, suppress_small=True)}, "
-                    f"sumPg={pg_vec.sum():.4f}, sumQg={qg_vec.sum():.4f}, "
-                    f"root_out_P={root_out_p:.4f}, "
-                    f"pcc_p_res={pcc_p_res:+.2e}, "
-                    f"global_p_res={global_p_res:+.2e}, "
-                    f"minV={float(rec['V'][k].min()):.4f}, "
-                    f"max|P|={float(rec['P'][k].abs().max()):.4f}, "
-                    f"max|Q|={float(rec['Q'][k].abs().max()):.4f}"
+                    f"sumPg={pg_vec.sum():.4f}, sumQg={qg_vec.sum():.4f}, root_out_P={root_out_p:.4f}, "
+                    f"pcc_p_res={pcc_p_res:+.2e}, global_p_res={global_p_res:+.2e}, "
+                    f"minV={float(rec['V'][k].min()):.4f}, max|P|={float(rec['P'][k].abs().max()):.4f}, "
+                    f"max|Q|={float(rec['Q'][k].abs().max()):.4f}, "
+                    f"delta_from_prev: L1_dPg={dpg_l1:.4e}, L1_dQg={dqg_l1:.4e}"
                 )
+                pg_prev_vec, qg_prev_vec = pg_vec, qg_vec
 
 # =============================
 # 5) GMM2 utils
@@ -873,11 +951,19 @@ def gmm2_cdf_torch(z, w, mu1, s1, mu2, s2):
     c2 = _normal_cdf_torch((z - mu2) / (s2 + 1e-12))
     return w[:,0:1] * c1 + w[:,1:2] * c2
 
+def _taus_to_tensor(taus, device, dtype):
+    if torch.is_tensor(taus):
+        return taus.to(device=device, dtype=dtype).view(1, -1)
+    return torch.tensor(taus, device=device, dtype=dtype).view(1, -1)
+
+
 def gmm2_quantile_torch(w, mu1, s1, mu2, s2, taus, n_iter=50):
     B = w.shape[0]
-    taus_t = torch.tensor(taus, device=w.device, dtype=w.dtype).view(1,-1).repeat(B,1)
-    lower = torch.minimum(mu1 - 8.0*s1, mu2 - 8.0*s2).repeat(1, len(taus))
-    upper = torch.maximum(mu1 + 8.0*s1, mu2 + 8.0*s2).repeat(1, len(taus))
+    taus_1 = _taus_to_tensor(taus, w.device, w.dtype)
+    K = taus_1.shape[1]
+    taus_t = taus_1.repeat(B, 1)
+    lower = torch.minimum(mu1 - 8.0*s1, mu2 - 8.0*s2).repeat(1, K)
+    upper = torch.maximum(mu1 + 8.0*s1, mu2 + 8.0*s2).repeat(1, K)
     for _ in range(n_iter):
         mid=(lower+upper)/2.0
         cdf_mid = gmm2_cdf_torch(mid, w, mu1, s1, mu2, s2)
@@ -891,11 +977,14 @@ def gmm2_quantile_torch(w, mu1, s1, mu2, s2, taus, n_iter=50):
     return z
 
 
-def sample_random_taus(batch_size: int, n_rand: int, device, dtype) -> torch.Tensor:
-    if n_rand <= 0:
-        return torch.empty((batch_size, 0), device=device, dtype=dtype)
-    u = torch.rand((batch_size, n_rand), device=device, dtype=dtype)
-    return RANDOM_TAU_LOW + (RANDOM_TAU_HIGH - RANDOM_TAU_LOW) * u
+def make_physics_taus(training: bool, device=None, dtype=None):
+    fixed = torch.tensor(FIXED_QUANTILE_TAUS, device=device, dtype=dtype)
+    if training and USE_RANDOM_PHYS_TAUS and N_RANDOM_PHYS_TAUS > 0:
+        rand = torch.rand(N_RANDOM_PHYS_TAUS, device=device, dtype=dtype)
+        rand = RANDOM_TAU_LOW + (RANDOM_TAU_HIGH - RANDOM_TAU_LOW) * rand
+        rand = torch.sort(rand).values
+        return torch.cat([fixed, rand], dim=0)
+    return fixed
 
 
 # =============================
@@ -1089,7 +1178,7 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
 
     n_batches = (n_data + eff_batch_size - 1) // eff_batch_size
     total_steps = EPOCHS * n_batches
-    print("=== 开始训练 33-bus VI-BPINN (v6 quantile physics + z-conditioned dispatch supervision) ===")
+    print("=== 开始训练 33-bus VI-BPINN (v7 quantile-random physics + active-pattern diagnostics) ===")
     print(f"[split] train_scenarios={X_tr.shape[0]}, val_scenarios={X_va.shape[0]}")
     print(f"[split] train_flat={xt.shape[0]}, val_flat={xv.shape[0]}")
     print(f"[train] n_data={n_data}, batch_size={eff_batch_size}, n_batches_per_epoch={n_batches}, total_update_steps={total_steps}")
@@ -1099,6 +1188,9 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
         perm = rng.permutation(n_data)
         beta = BETA_KL_MAX * min(1.0, (ep + 1) / max(1, KL_WARMUP_EPOCHS))
         ep_loss, ep_nll, ep_disp_sup, ep_phys, ep_kl = 0.0, 0.0, 0.0, 0.0, 0.0
+        ep_tau_min = 1.0
+        ep_tau_max = 0.0
+        ep_n_phys_taus = None
 
         for b in range(n_batches):
             b0 = b * eff_batch_size
@@ -1118,21 +1210,21 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
                 pg_hat, qg_hat = net.recover_dispatch_from_h_z(h_b, yb_p0, p0_mean_t, p0_std_t, sample=True)
                 nll = (-gmm2_log_prob(yb_p0, w, mu1, s1, mu2, s2)).mean()
                 x_raw = xb * x_std_t + x_mean_t
-                z_fixed = gmm2_quantile_torch(w, mu1, s1, mu2, s2, QUANTILE_TAUS)
-                tau_rand = sample_random_taus(xb.shape[0], RANDOM_TAU_COUNT, xb.device, xb.dtype)
-                z_rand = gmm2_quantile_torch(w, mu1, s1, mu2, s2, tau_rand[0].detach().cpu().tolist()) if RANDOM_TAU_COUNT > 0 else z_fixed[:, :0]
-                if RANDOM_TAU_COUNT > 0:
-                    # per-batch random taus; each column corresponds to one sampled tau shared across batch
-                    z_q = torch.cat([z_fixed, z_rand], dim=1)
-                else:
-                    z_q = z_fixed
+                taus_train = make_physics_taus(training=True, device=xb.device, dtype=xb.dtype)
+                ep_tau_min = min(ep_tau_min, float(taus_train.min().detach().cpu()))
+                ep_tau_max = max(ep_tau_max, float(taus_train.max().detach().cpu()))
+                ep_n_phys_taus = int(taus_train.numel())
+                z_q = gmm2_quantile_torch(w, mu1, s1, mu2, s2, taus_train)
                 Kall = z_q.shape[1]
                 h_rep = h_b.unsqueeze(1).repeat(1, Kall, 1).reshape(-1, h_b.shape[1])
                 z_flat = z_q.reshape(-1,1)
                 pg_q, qg_q = net.recover_dispatch_from_h_z(h_rep, z_flat, p0_mean_t, p0_std_t, sample=True)
                 pg_q = pg_q.reshape(-1, Kall, n_gen)
                 qg_q = qg_q.reshape(-1, Kall, n_gen)
-                phys = physics_loss_quantile(case, x_raw, z_q, pg_q, qg_q, tau_weights=torch.full((Kall,), 1.0 / Kall, device=xb.device, dtype=xb.dtype))
+                # with random taus, always use uniform weights over all taus;
+                # tail-weighting is only for fixed-only quantiles.
+                tau_weights = torch.full((Kall,), 1.0 / Kall, device=xb.device, dtype=xb.dtype)
+                phys = physics_loss_quantile(case, x_raw, z_q, pg_q, qg_q, tau_weights=tau_weights)
                 dispatch_sup = dispatch_supervision_loss(
                     case,
                     pg_hat,
@@ -1167,7 +1259,8 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
                 f"Epoch {ep+1:4d} | avg_loss={ep_loss/n_batches:.6f} "
                 f"avg_nll={ep_nll/n_batches:.6f} avg_disp_sup={ep_disp_sup/n_batches:.6f} "
                 f"avg_quantile_phys={ep_phys/n_batches:.6f} avg_kl/N={ep_kl/n_batches:.6f} "
-                f"beta={beta:.4f} n_batches={n_batches}"
+                f"beta={beta:.4f} n_batches={n_batches} "
+                f"n_phys_taus={ep_n_phys_taus} train_tau_min={ep_tau_min:.4f} train_tau_max={ep_tau_max:.4f}"
             )
             if xv.shape[0] > 0:
                 with torch.no_grad():
@@ -1184,10 +1277,8 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
                         normalize=NORMALIZE_DISPATCH_SUP,
                         return_parts=True,
                     )
-                    z_fixed_v = gmm2_quantile_torch(wv, mu1v, s1v, mu2v, s2v, QUANTILE_TAUS)
-                    tau_rand_v = sample_random_taus(xv.shape[0], RANDOM_TAU_COUNT, xv.device, xv.dtype)
-                    z_rand_v = gmm2_quantile_torch(wv, mu1v, s1v, mu2v, s2v, tau_rand_v[0].detach().cpu().tolist()) if RANDOM_TAU_COUNT > 0 else z_fixed_v[:, :0]
-                    z_q_v = torch.cat([z_fixed_v, z_rand_v], dim=1) if RANDOM_TAU_COUNT > 0 else z_fixed_v
+                    taus_eval = make_physics_taus(training=False, device=xv.device, dtype=xv.dtype)
+                    z_q_v = gmm2_quantile_torch(wv, mu1v, s1v, mu2v, s2v, taus_eval)
                     Kval = z_q_v.shape[1]
                     hv_rep = hv.unsqueeze(1).repeat(1, Kval, 1).reshape(-1, hv.shape[1])
                     zf_v = z_q_v.reshape(-1,1)
@@ -1195,7 +1286,7 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
                     pg_qv = pg_qv.reshape(-1, Kval, n_gen)
                     qg_qv = qg_qv.reshape(-1, Kval, n_gen)
                     x_raw_v = xv * x_std_t + x_mean_t
-                    val_phys, val_parts = physics_loss_quantile(case, x_raw_v, z_q_v, pg_qv, qg_qv, tau_weights=torch.full((Kval,), 1.0 / Kval, device=xv.device, dtype=xv.dtype), return_parts=True)
+                    val_phys, val_parts = physics_loss_quantile(case, x_raw_v, z_q_v, pg_qv, qg_qv, return_parts=True)
                     kl_now = net.kl_divergence()
                     val_total = val_nll + LAM_DISPATCH_SUP * val_disp_sup + LAM_PHYS * val_phys + beta * kl_now / n_data
                 msg += (
@@ -1309,11 +1400,11 @@ def eval_and_plot(case: GridCase, net: BayesGMM2QuantileDispatchNet, x_mean: np.
     plt.xlabel("P0 max (MW)")
     plt.ylabel("CDF")
     plt.ylim(-0.02, 1.02)
-    plt.title("IEEE 33-bus Pomax CDF — v6 quantile physics")
+    plt.title("IEEE 33-bus Pomax CDF — v7 quantile-random active diagnostics")
     plt.legend(loc="upper left")
     plt.grid(False)
     plt.tight_layout()
-    out_png = "Pomax_CDF_33bus_v6_quantile_physics.png"
+    out_png = "Pomax_CDF_33bus_v7_quantile_random_active_diag.png"
     plt.savefig(out_png, dpi=280, bbox_inches="tight")
     plt.show()
     return arms
@@ -1401,7 +1492,8 @@ def main():
     print("生成 33 节点训练数据...")
     print(f"[config] FAST_MODE={FAST_MODE}")
     print(f"[config] NUM_SCENARIOS={NUM_SCENARIOS}, MC_PER_SCENARIO={MC_PER_SCENARIO}, total_labels={NUM_SCENARIOS * MC_PER_SCENARIO}")
-    X, YP0, YPG, YQG = generate_dataset(case, NUM_SCENARIOS, MC_PER_SCENARIO, seed=SEED_DATA)
+    X, YP0, YPG, YQG, active_records, all_active_names = generate_dataset(case, NUM_SCENARIOS, MC_PER_SCENARIO, seed=SEED_DATA)
+    summarize_active_patterns(active_records, all_active_names, top_k=ACTIVE_TOP_K)
     print(f"Dataset: X={X.shape}, YP0={YP0.shape}, YPG={YPG.shape}, YQG={YQG.shape}")
     print(f"Flattened samples before split = {X.shape[0] * YP0.shape[1]}")
 
