@@ -1,32 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Stage-1 extension: 3-bus VI-BPINN -> IEEE 33-bus single-period VI-BPINN.
+v6 quantile-physics extension: IEEE 33-bus single-period VI-BPINN.
 
-[DIAG VERSION: layer-A dispatch physics + OPF dispatch supervision]
-
-Compared with v4_layerA:
+Core:
 - keep Bayesian GMM-2 output for Pomax conditional distribution
-- keep neural dispatch head for Pg/Qg
-- keep layer-A physics loss based on predicted Pg/Qg
-- additionally save OPF internal dispatch labels Pg_OPF/Qg_OPF from Gurobi
-- add supervised Pg/Qg dispatch recovery loss during training
-- still single-period, no ESS/EV/24h, no KKT, no differentiable OPF layer
+- keep OPF label generator solve_pomax_gurobi_33bus() and dataset generation
+- keep single-period LinDistFlow physics conventions and constraints
+- keep ELBO style objective: NLL + dispatch supervision + quantile physics + beta * KL/N
 
-Core kept from v4:
-- IEEE 33-bus single-period LinDistFlow model
-- Gurobi OPF label generator solve_pomax_gurobi_33bus()
-- Bayesian NN (VI) + GMM-2 output for Pomax conditional distribution
-- ELBO style training objective: NLL + supervised dispatch + physics loss + beta * KL/N
-- evaluate with MC baseline CDF, ARMS, q0.05 comparison
-
-Layer-A + dispatch-supervision notes:
-- P0 supervision is still performed by the GMM negative log-likelihood (NLL), not plain MSE.
-- Pg/Qg supervision is performed by MSE against OPF internal dispatch labels.
-- Physics loss continues to constrain consistency among predicted Pg/Qg, predicted P0 mean,
-  branch flows, voltages, line limits, and generator/PV constraints.
-- OPF internal dispatch solutions can be non-unique, so the Pg/Qg supervised loss weight is
-  intentionally small to avoid overwhelming P0 distribution learning.
-- no 24h/ESS/EV, no KKT, no HMC/dropout, no differentiable OPF layer, no GMM3
+v6 key:
+- replace mean-only physics with quantile-based physics over tau={0.05,0.25,0.50,0.75,0.95}
+- dispatch recovery is boundary-point conditioned: (x, z) -> Pg/Qg
+- OPF internal dispatch supervision is also conditioned by z=P0 label
 """
 
 import math
@@ -796,47 +781,6 @@ def dispatch_label_sanity_check(case: GridCase, n_samples: int = 3, seed: int = 
         )
 
 
-def layerA_dispatch_sanity_check(case: GridCase, n_samples: int = 3, seed: int = 7):
-    print("\n=== Layer-A dispatch recovery sanity check ===")
-    rng = np.random.default_rng(seed)
-    pg_mid = 0.5 * (case.pg_min + case.pg_max)
-    qg_mid = 0.5 * (case.qg_min + case.qg_max)
-    for k in range(n_samples):
-        pd_mu, _, pr_mu, _ = sample_scenario_means(case, rng)
-        x = make_feature_vector(case, pd_mu, pr_mu).reshape(1, -1)
-        mu_p0 = np.array([[max(0.05, pd_mu.sum() - pr_mu.sum() - pg_mid.sum())]], dtype=float)
-        xt = torch.tensor(x, dtype=torch.float32)
-        p0t = torch.tensor(mu_p0, dtype=torch.float32)
-        pgt = torch.tensor(pg_mid.reshape(1, -1), dtype=torch.float32)
-        qgt = torch.tensor(qg_mid.reshape(1, -1), dtype=torch.float32)
-        rec = recover_flows_from_pred_dispatch(case, xt, p0t, pgt, qgt)
-        phys, parts = physics_loss_layerA(case, xt, p0t, pgt, qgt, return_parts=True)
-
-        total_pd = float(rec["pd"].sum())
-        total_pr = float(rec["pr"].sum())
-        total_pg = float(rec["pg"].sum())
-        total_qd = float(rec["qd"].sum())
-        total_qr = float(rec["qr"].sum())
-        total_qg = float(rec["qg"].sum())
-        p_root = float(rec["P"][:, case.out_branches[case.root]].sum())
-        q_root = float(rec["Q"][:, case.out_branches[case.root]].sum())
-        v_min = float(rec["V"].min())
-        print(f"[layerA-check {k}] Pbal: muP0={mu_p0[0,0]:.4f}, Pg={total_pg:.4f}, Pd={total_pd:.4f}, Pr={total_pr:.4f}, root_out={p_root:.4f}")
-        print(f"                 Qbal: Qg={total_qg:.4f}, Qd={total_qd:.4f}, Qr={total_qr:.4f}, rootQ={q_root:+.2e}, Vmin^2={v_min:.4f}, phys={float(phys):.4e}")
-        print("                 parts: " + ", ".join(f"{name}={float(val):.2e}" for name, val in parts.items()))
-
-    # monotonicity debug: higher load -> lower pomax tendency (heuristic check)
-    pd_mu, qd_mu, pr_mu, qr_mu = sample_scenario_means(case, rng)
-    y0 = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_mu, qr_mu)
-    y_hi_load = solve_pomax_gurobi_33bus(case, pd_mu * 1.1, qd_mu * 1.1, pr_mu, qr_mu)
-    pv_cap = np.zeros(case.n_bus, dtype=float)
-    pv_cap[case.pv_buses] = case.pv_pmax
-    pr_hi = np.minimum(pr_mu * 1.2, pv_cap)
-    qr_hi = pr_hi * math.tan(math.acos(case.pv_pf))
-    y_hi_pv = solve_pomax_gurobi_33bus(case, pd_mu, qd_mu, pr_hi, qr_hi)
-    print(f"[mono-check] base={y0:.4f}, high-load={y_hi_load:.4f}, high-pv={y_hi_pv:.4f} (expected: high-load <= base, high-pv >= base, not strict)")
-
-
 def quantile_physics_sanity_check(case: GridCase, net, x_mean, x_std, p0_mean, p0_std, n_samples: int = 3, seed: int = 99):
     print("\n=== Quantile physics sanity check ===")
     rng = np.random.default_rng(seed)
@@ -848,7 +792,8 @@ def quantile_physics_sanity_check(case: GridCase, net, x_mean, x_std, p0_mean, p
         xt = torch.tensor(xn, dtype=torch.float32, device=DEVICE)
         x_raw = torch.tensor(x, dtype=torch.float32, device=DEVICE)
         with torch.no_grad():
-            w, mu1, s1, mu2, s2 = net.forward_gmm(xt, sample=False)
+            h0 = net.encode(xt, sample=False)
+            w, mu1, s1, mu2, s2 = net.gmm_head(h0, sample=False)
             zq = gmm2_quantile_torch(w, mu1, s1, mu2, s2, QUANTILE_TAUS)
             h = net.encode(xt, sample=False).repeat(len(QUANTILE_TAUS), 1)
             pg, qg = net.recover_dispatch_from_h_z(h, zq.reshape(-1, 1), torch.tensor([[p0_mean]], device=DEVICE), torch.tensor([[p0_std]], device=DEVICE), sample=False)
@@ -1092,7 +1037,7 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
 
     n_batches = (n_data + eff_batch_size - 1) // eff_batch_size
     total_steps = EPOCHS * n_batches
-    print("=== 开始训练 33-bus VI-BPINN (v5 layer-A dispatch physics + OPF dispatch supervision) ===")
+    print("=== 开始训练 33-bus VI-BPINN (v6 quantile physics + z-conditioned dispatch supervision) ===")
     print(f"[split] train_scenarios={X_tr.shape[0]}, val_scenarios={X_va.shape[0]}")
     print(f"[split] train_flat={xt.shape[0]}, val_flat={xv.shape[0]}")
     print(f"[train] n_data={n_data}, batch_size={eff_batch_size}, n_batches_per_epoch={n_batches}, total_update_steps={total_steps}")
@@ -1116,8 +1061,8 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
             disp_sup_acc = 0.0
             phys_acc = 0.0
             for _ in range(TRAIN_WEIGHT_SAMPLES):
-                w, mu1, s1, mu2, s2 = net.forward_gmm(xb, sample=True)
                 h_b = net.encode(xb, sample=True)
+                w, mu1, s1, mu2, s2 = net.gmm_head(h_b, sample=True)
                 pg_hat, qg_hat = net.recover_dispatch_from_h_z(h_b, yb_p0, p0_mean_t, p0_std_t, sample=True)
                 nll = (-gmm2_log_prob(yb_p0, w, mu1, s1, mu2, s2)).mean()
                 x_raw = xb * x_std_t + x_mean_t
@@ -1166,8 +1111,8 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
             )
             if xv.shape[0] > 0:
                 with torch.no_grad():
-                    wv, mu1v, s1v, mu2v, s2v = net.forward_gmm(xv, sample=False)
                     hv = net.encode(xv, sample=False)
+                    wv, mu1v, s1v, mu2v, s2v = net.gmm_head(hv, sample=False)
                     pg_pred_v, qg_pred_v = net.recover_dispatch_from_h_z(hv, yp0_v, p0_mean_t, p0_std_t, sample=False)
                     val_nll = (-gmm2_log_prob(yp0_v, wv, mu1v, s1v, mu2v, s2v)).mean()
                     val_disp_sup, val_disp_parts = dispatch_supervision_loss(
@@ -1206,7 +1151,7 @@ def train_bayes_gmm2(case: GridCase, X: np.ndarray, YP0: np.ndarray, YPG: np.nda
                 )
             print(msg)
 
-    return net, x_mean, x_std
+    return net, x_mean, x_std, float(p0_mean_t.item()), float(p0_std_t.item())
 
 
 # =============================
@@ -1388,7 +1333,6 @@ def main():
     case = build_ieee33_case()
     if RUN_SANITY_CHECKS:
         opf_sanity_check(case, n_samples=3, seed=SEED_DATA + 11)
-        layerA_dispatch_sanity_check(case, n_samples=3, seed=SEED_DATA + 12)
         dispatch_label_sanity_check(case, n_samples=3, seed=SEED_DATA + 13)
     print("生成 33 节点训练数据...")
     print(f"[config] FAST_MODE={FAST_MODE}")
@@ -1397,7 +1341,9 @@ def main():
     print(f"Dataset: X={X.shape}, YP0={YP0.shape}, YPG={YPG.shape}, YQG={YQG.shape}")
     print(f"Flattened samples before split = {X.shape[0] * YP0.shape[1]}")
 
-    net, x_mean, x_std = train_bayes_gmm2(case, X, YP0, YPG, YQG)
+    net, x_mean, x_std, p0_mean, p0_std = train_bayes_gmm2(case, X, YP0, YPG, YQG)
+    if RUN_SANITY_CHECKS:
+        quantile_physics_sanity_check(case, net, x_mean, x_std, p0_mean, p0_std, n_samples=3, seed=SEED_DATA + 21)
     eval_and_plot(case, net, x_mean, x_std, mc_eval=2500)
     if RUN_MULTI_TEST:
         eval_multiple_test_scenarios(
