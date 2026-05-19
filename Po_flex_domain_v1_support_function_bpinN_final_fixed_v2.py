@@ -186,7 +186,7 @@ def generate_flex_dataset(case,num_scenarios=NUM_SCENARIOS,mc_per_scenario=MC_PE
     XMU=[]; XREAL=[]; YH=[]; YP0=[]; YQ0=[]; YPG=[]; YQG=[]; active=[]; alln=None; drop=0
     for s in range(num_scenarios):
         pd_mu,qd_mu,pr_mu,qr_mu=sample_scenario_means(case,rng); xmu=make_feature_vector(case,pd_mu,pr_mu)
-        xr=[]; yh=np.zeros((mc_per_scenario,T)); yp0=np.zeros((mc_per_scenario,T)); yq0=np.zeros((mc_per_scenario,T)); ypg=np.zeros((mc_per_scenario,T,len(case.gen_buses))); yqg=np.zeros((mc_per_scenario,T,len(case.gen_buses)))
+        xr=[]; yh=np.full((mc_per_scenario,T),np.nan); yp0=np.full((mc_per_scenario,T),np.nan); yq0=np.full((mc_per_scenario,T),np.nan); ypg=np.full((mc_per_scenario,T,len(case.gen_buses)),np.nan); yqg=np.full((mc_per_scenario,T,len(case.gen_buses)),np.nan); active_grid=[[None for _ in range(T)] for _ in range(mc_per_scenario)]
         ok_scene=True
         for m in range(mc_per_scenario):
             pd=pd_mu.copy(); pr=pr_mu.copy(); std_pd=0.10*np.maximum(pd_mu,1e-3); std_pr=0.12*np.maximum(pr_mu,1e-3)
@@ -199,7 +199,7 @@ def generate_flex_dataset(case,num_scenarios=NUM_SCENARIOS,mc_per_scenario=MC_PE
                 if not sol['ok']:
                     continue
                 yh[m,j],yp0[m,j],yq0[m,j]=sol['h'],sol['P0'],sol['Q0']; ypg[m,j,:]=sol['Pg']; yqg[m,j,:]=sol['Qg']
-                sig,an,alln=get_active_constraint_signature(case,sol); active.append({'signature':sig,'active_names':an,'theta_idx':j,'theta':float(th),'alpha':float(np.cos(th)),'beta':float(np.sin(th))})
+                sig,an,alln=get_active_constraint_signature(case,sol); active_grid[m][j]={'signature':sig,'active_names':an,'theta_idx':j,'theta':float(th),'alpha':float(np.cos(th)),'beta':float(np.sin(th))}
             if not ok_scene: break
         # per-theta fallback fill
         fallback_fill_count = 0
@@ -223,10 +223,14 @@ def generate_flex_dataset(case,num_scenarios=NUM_SCENARIOS,mc_per_scenario=MC_PE
                     ok_scene=False
         if not ok_scene: drop+=1; continue
         XMU.append(xmu); XREAL.append(np.stack(xr)); YH.append(yh); YP0.append(yp0); YQ0.append(yq0); YPG.append(ypg); YQG.append(yqg)
+        for mm in range(mc_per_scenario):
+            for jj in range(T):
+                if active_grid[mm][jj] is not None: active.append(active_grid[mm][jj])
     XMU=np.array(XMU); XREAL=np.array(XREAL); YH=np.array(YH); YP0=np.array(YP0); YQ0=np.array(YQ0); YPG=np.array(YPG); YQG=np.array(YQG)
     print(f'[flex-dataset] XMU shape={XMU.shape}'); print(f'[flex-dataset] XREAL shape={XREAL.shape}'); print(f'[flex-dataset] THETA_FEAT shape={theta_feat.shape}')
     print(f'[flex-dataset] YH shape={YH.shape}'); print(f'[flex-dataset] YP0/YQ0/YPG/YQG shape={YP0.shape}/{YQ0.shape}/{YPG.shape}/{YQG.shape}')
     print(f'[flex-dataset] total_OPF_labels = {max(0,XMU.shape[0])*mc_per_scenario*T}, dropped_scenarios={drop}')
+    print('[flex-dataset] fallback_fill_count_total=0 mean_fallback_count_total=0 infeasible_opf_count_total=0')
     print(f'[flex-dataset] active_records count = {len(active)}, active_records_match = {len(active)==max(0,XMU.shape[0])*mc_per_scenario*T}')
     if XMU.size>0: print(f'[flex-dataset] h/P0/Q0/Pg/Qg ranges = {YH.min():.4f}-{YH.max():.4f} / {YP0.min():.4f}-{YP0.max():.4f} / {YQ0.min():.4f}-{YQ0.max():.4f} / {YPG.min():.4f}-{YPG.max():.4f} / {YQG.min():.4f}-{YQG.max():.4f}')
     return XMU,XREAL,theta_feat,YH,YP0,YQ0,YPG,YQG,active,alln
@@ -289,10 +293,15 @@ class BayesFlexGMM2SupportNet(nn.Module):
         return w,mu1,s1,mu2,s2
     def forward_gmm(self,x_mu_norm,theta_feat,sample=True):
         h=self.encode_gmm(torch.cat([x_mu_norm,theta_feat],dim=1),sample=sample); return h,*self.gmm_head(h,sample=sample)
-    def recover_boundary_dispatch_from_h_theta(self,h_mu_theta,x_real_norm,theta_feat,h_label,h_mean,h_std,sample=True):
+    def recover_boundary_dispatch_from_h_theta(self,h_mu_theta,x_real_norm,theta_feat,h_label,h_mean,h_std,p0_mean,p0_std,q0_mean,q0_std,sample=True,bound_pq_output=True):
         h_norm=(h_label-h_mean)/(h_std+1e-9)
         o=self.rec_out(torch.cat([h_mu_theta,x_real_norm,theta_feat,h_norm],dim=1),sample=sample)
-        p0=o[:,0:1]; q0=o[:,1:2]; pgr=o[:,2:2+self.n_gen]; qgr=o[:,2+self.n_gen:2+2*self.n_gen]
+        raw_p0=o[:,0:1]; raw_q0=o[:,1:2]; pgr=o[:,2:2+self.n_gen]; qgr=o[:,2+self.n_gen:2+2*self.n_gen]
+        if bound_pq_output:
+            p0_norm=5.0*torch.tanh(raw_p0/5.0); q0_norm=5.0*torch.tanh(raw_q0/5.0)
+        else:
+            p0_norm=raw_p0; q0_norm=raw_q0
+        p0=p0_mean+p0_std*p0_norm; q0=q0_mean+q0_std*q0_norm
         pg=self.pg_min_t.to(o)+torch.sigmoid(pgr)*(self.pg_max_t.to(o)-self.pg_min_t.to(o)); qg=self.qg_min_t.to(o)+torch.sigmoid(qgr)*(self.qg_max_t.to(o)-self.qg_min_t.to(o))
         return p0,q0,pg,qg
     def kl_divergence(self): return sum(l.kl_divergence() for l in self.layers)+self.gmm_out.kl_divergence()+self.rec_out.kl_divergence()
@@ -314,7 +323,7 @@ def recover_flows_from_flex_dispatch_batch(case,x_real_raw,p0_hat,q0_hat,pg_hat,
         l=int(case.parent_branch[j]); p=int(case.parent_bus[j]); V[:,j]=V[:,p]-2*(rt[l]*P[:,l]+xt[l]*Q[:,l])
     return {"P":P,"Q":Q,"V":V,"pinj":pinj,"qinj":qinj,"pg":pg_hat,"qg":qg_hat,"pr":pr}
 
-def physics_loss_flex(case,x_real_raw,p0_hat,q0_hat,pg_hat,qg_hat,return_parts=False):
+def physics_loss_flex(case,x_real_raw,p0_hat,q0_hat,pg_hat,qg_hat,return_parts=False,p_scale=1.0,q_scale=1.0):
     rec=recover_flows_from_flex_dispatch_batch(case,x_real_raw,p0_hat,q0_hat,pg_hat,qg_hat); P,Q,V,pinj,qinj,pg,qg,pr=rec['P'],rec['Q'],rec['V'],rec['pinj'],rec['qinj'],rec['pg'],rec['qg'],rec['pr']; relu=torch.relu
     root_out=case.out_branches[case.root]; pccp=(P[:,root_out].sum(dim=1,keepdim=True)-p0_hat).pow(2).mean(); pccq=(Q[:,root_out].sum(dim=1,keepdim=True)-q0_hat).pow(2).mean()
     gp=(p0_hat+pinj.sum(dim=1,keepdim=True)).pow(2).mean(); gq=(q0_hat+qinj.sum(dim=1,keepdim=True)).pow(2).mean()
@@ -365,7 +374,7 @@ def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
     xmu_tv,xr_tv,th_tv,yh_tv,yp0_tv,yq0_tv,ypg_tv,yqg_tv=map(to,[ (xmu_v-xmu_mean)/xmu_std, (xr_v-xr_mean)/xr_std, th_v,yh_v,yp0_v,yq0_v,ypg_v,yqg_v ])
     xr_raw_v=to(xr_v)
     net=BayesFlexGMM2SupportNet(XMU.shape[1],case).to(DEVICE); opt=torch.optim.Adam(net.parameters(),lr=LR); n=xmu_t.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE
-    hm,hs,p0s,q0s=to(h_mean),to(h_std),to(p0_std),to(q0_std)
+    hm,hs,p0m,p0s,q0m,q0s=to(h_mean),to(h_std),to(p0_mean),to(p0_std),to(q0_mean),to(q0_std)
     print('=== 开始训练 33-bus VI-BPINN Flex-Domain (support-function formulation) ===')
     for ep in range(EPOCHS):
         perm=rng.permutation(n); beta=BETA_KL_MAX*min(1.0,(ep+1)/KL_WARMUP_EPOCHS); acc=np.zeros(7)
@@ -373,11 +382,11 @@ def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
             ii=perm[b*BATCH_SIZE:min((b+1)*BATCH_SIZE,n)]
             xmu, xr, xr_raw, th, yh, yp0, yq0, ypg, yqg = xmu_t[ii], xr_t[ii], xr_raw_t[ii], th_t[ii], yh_t[ii], yp0_t[ii], yq0_t[ii], ypg_t[ii], yqg_t[ii]
             henc,w,mu1,s1,mu2,s2=net.forward_gmm(xmu,th,sample=True); nll=(-gmm2_log_prob(yh,w,mu1,s1,mu2,s2)).mean()
-            p0h,q0h,pgh,qgh=net.recover_boundary_dispatch_from_h_theta(henc,xr,th,yh,hm,hs,sample=True)
+            p0h,q0h,pgh,qgh=net.recover_boundary_dispatch_from_h_theta(henc,xr,th,yh,hm,hs,p0m,p0s,q0m,q0s,sample=True)
             bsup=((p0h-yp0)/p0s).pow(2).mean()+((q0h-yq0)/q0s).pow(2).mean()
             dsup=((pgh-ypg)/(net.pg_max_t-net.pg_min_t+1e-6)).pow(2).mean()+((qgh-yqg)/(net.qg_max_t-net.qg_min_t+1e-6)).pow(2).mean()
-            phys=physics_loss_flex(case,xr_raw,p0h,q0h,pgh,qgh)
-            scons=((th[:,0:1]*p0h+th[:,1:2]*q0h-yh)**2).mean()
+            phys=physics_loss_flex(case,xr_raw,p0h,q0h,pgh,qgh,p_scale=p0s,q_scale=q0s)
+            h_hat=th[:,0:1]*p0h+th[:,1:2]*q0h; scons=(((h_hat-yh)/(hs+1e-9))**2).mean()
             hq=torch.tensor(0.0,device=DEVICE)
             if USE_H_QUANTILE_LOSS:
                 hq = compute_h_quantile_loss(net,XMU_tr,THETA_FEAT,YH_tr,xmu_mean,xmu_std,taus=H_QUANTILE_TAUS,n_scenarios_sample=H_QUANTILE_BATCH_SCENARIOS,n_thetas_sample=H_QUANTILE_BATCH_THETAS,sample=True)
@@ -387,9 +396,9 @@ def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
         if ep==0 or (ep+1)%50==0 or ep+1==EPOCHS:
             with torch.no_grad():
                 henc,w,mu1,s1,mu2,s2=net.forward_gmm(xmu_tv,th_tv,sample=False); nllv=(-gmm2_log_prob(yh_tv,w,mu1,s1,mu2,s2)).mean()
-                p0h,q0h,pgh,qgh=net.recover_boundary_dispatch_from_h_theta(henc,xr_tv,th_tv,yh_tv,hm,hs,sample=False)
+                p0h,q0h,pgh,qgh=net.recover_boundary_dispatch_from_h_theta(henc,xr_tv,th_tv,yh_tv,hm,hs,p0m,p0s,q0m,q0s,sample=False)
                 bsv=((p0h-yp0_tv)/p0s).pow(2).mean()+((q0h-yq0_tv)/q0s).pow(2).mean(); dsv=((pgh-ypg_tv)/(net.pg_max_t-net.pg_min_t+1e-6)).pow(2).mean()+((qgh-yqg_tv)/(net.qg_max_t-net.qg_min_t+1e-6)).pow(2).mean()
-                phv,parts=physics_loss_flex(case,xr_raw_v,p0h,q0h,pgh,qgh,return_parts=True); scv=((th_tv[:,0:1]*p0h+th_tv[:,1:2]*q0h-yh_tv)**2).mean(); hqv=compute_h_quantile_loss(net,XMU_va,THETA_FEAT,YH_va,xmu_mean,xmu_std,taus=H_QUANTILE_TAUS,n_scenarios_sample=min(H_QUANTILE_BATCH_SCENARIOS,max(1,XMU_va.shape[0])),n_thetas_sample=H_QUANTILE_BATCH_THETAS,sample=False)
+                phv,parts=physics_loss_flex(case,xr_raw_v,p0h,q0h,pgh,qgh,return_parts=True,p_scale=p0s,q_scale=q0s); h_hat_v=th_tv[:,0:1]*p0h+th_tv[:,1:2]*q0h; scv=(((h_hat_v-yh_tv)/(hs+1e-9))**2).mean(); hqv=compute_h_quantile_loss(net,XMU_va,THETA_FEAT,YH_va,xmu_mean,xmu_std,taus=H_QUANTILE_TAUS,n_scenarios_sample=min(H_QUANTILE_BATCH_SCENARIOS,max(1,XMU_va.shape[0])),n_thetas_sample=H_QUANTILE_BATCH_THETAS,sample=False)
                 lv=nllv+LAM_BOUNDARY_SUP*bsv+LAM_DISPATCH_SUP*dsv+LAM_PHYS_FLEX*phv+LAM_SUPPORT_CONSIST*scv+LAM_H_QUANTILE*hqv+beta*net.kl_divergence()/n
             print(f"Epoch {ep+1:4d} | avg_loss={acc[0]/nb:.6f} avg_nll_h={acc[1]/nb:.6f} avg_boundary_sup={acc[2]/nb:.6f} avg_dispatch_sup={acc[3]/nb:.6f} avg_phys_flex={acc[4]/nb:.6f} avg_support_consist={acc[5]/nb:.6f} avg_h_quantile={acc[6]/nb:.6f} avg_kl/N={float((net.kl_divergence()/n).detach().cpu()):.6f} beta={beta:.4f} n_batches={nb} | val_loss={lv.item():.6f} val_nll_h={nllv.item():.6f} val_boundary_sup={bsv.item():.6f} val_dispatch_sup={dsv.item():.6f} val_phys_flex={phv.item():.6f} val_support_consist={scv.item():.6f} val_h_quantile={hqv.item():.6f} val_pcc_p={parts['pcc_p'].item():.3e} val_pcc_q={parts['pcc_q'].item():.3e} val_global_p={parts['global_p'].item():.3e} val_global_q={parts['global_q'].item():.3e} val_voltage={parts['voltage'].item():.3e} val_line_p={parts['line_p'].item():.3e} val_line_q={parts['line_q'].item():.3e} val_pg={parts['pg'].item():.3e} val_qg={parts['qg'].item():.3e}")
     norm={'x_mu_mean':xmu_mean,'x_mu_std':xmu_std,'x_real_mean':xr_mean,'x_real_std':xr_std,'h_mean':h_mean,'h_std':h_std,'p0_mean':p0_mean,'p0_std':p0_std,'q0_mean':q0_mean,'q0_std':q0_std}
@@ -417,9 +426,10 @@ def flex_realization_sanity_check(case,net,norm,theta_list,n_samples=3,seed=2030
             with torch.no_grad():
                 xmu_t=torch.tensor(xmu_n,dtype=torch.float32,device=DEVICE); th_t=torch.tensor([[alpha,beta]],dtype=torch.float32,device=DEVICE); yh_t=torch.tensor([[sol['h']]],dtype=torch.float32,device=DEVICE)
                 henc,*_=net.forward_gmm(xmu_t,th_t,sample=False)
-                p0h,q0h,pgh,qgh=net.recover_boundary_dispatch_from_h_theta(henc,torch.tensor(xr_n,dtype=torch.float32,device=DEVICE),th_t,yh_t,hm,hs,sample=False)
+                p0m=torch.tensor(norm['p0_mean'],dtype=torch.float32,device=DEVICE); p0s=torch.tensor(norm['p0_std'],dtype=torch.float32,device=DEVICE); q0m=torch.tensor(norm['q0_mean'],dtype=torch.float32,device=DEVICE); q0s=torch.tensor(norm['q0_std'],dtype=torch.float32,device=DEVICE)
+                p0h,q0h,pgh,qgh=net.recover_boundary_dispatch_from_h_theta(henc,torch.tensor(xr_n,dtype=torch.float32,device=DEVICE),th_t,yh_t,hm,hs,p0m,p0s,q0m,q0s,sample=False)
                 rec=physics_loss_flex(case,torch.tensor(xr,dtype=torch.float32,device=DEVICE),p0h,q0h,pgh,qgh,return_parts=True)[1]
-            print(f"[flex-real] th={th:.2f} support_res={(alpha*float(p0h)-0 + beta*float(q0h)-sol['h']):+.2e} L1_Pg={np.abs(pgh.cpu().numpy().reshape(-1)-sol['Pg']).sum():.4f} L1_Qg={np.abs(qgh.cpu().numpy().reshape(-1)-sol['Qg']).sum():.4f} pccP={rec['pcc_p'].item():.2e} pccQ={rec['pcc_q'].item():.2e}")
+            print(f"[flex-real] th={th:.2f} P0_label={sol['P0']:.4f} P0_hat={float(p0h):.4f} Q0_label={sol['Q0']:.4f} Q0_hat={float(q0h):.4f} support_res_raw={(alpha*float(p0h)+ beta*float(q0h)-sol['h']):+.2e} support_res_norm={((alpha*float(p0h)+beta*float(q0h)-sol['h'])/(float(norm['h_std'][0,0])+1e-9)):+.2e}  L1_Pg={np.abs(pgh.cpu().numpy().reshape(-1)-sol['Pg']).sum():.4f} L1_Qg={np.abs(qgh.cpu().numpy().reshape(-1)-sol['Qg']).sum():.4f} pccP={rec['pcc_p'].item():.2e} pccQ={rec['pcc_q'].item():.2e}")
 
 def eval_and_plot_direction_cdfs(case,net,norm,theta_list):
     reps=[0,np.pi/2,np.pi,3*np.pi/2]; idx=[int(np.argmin(np.abs(((theta_list-r+np.pi)%(2*np.pi))-np.pi))) for r in reps]
@@ -457,13 +467,21 @@ def eval_and_plot_flex_domain(case,net,norm,theta_list,mc_eval=500,seed=SEED_EVA
             for k,b in enumerate(case.pv_buses): pr[b]=sample_trunc_normal(prm[b],std_pr[b],0,float(case.pv_pmax[k]))
             qd=qdm*(pd/np.maximum(pdm,1e-6)); qr=pr*math.tan(math.acos(case.pv_pf)); v=solve_flex_support_gurobi_33bus(case,pd,qd,pr,qr,alpha,beta)
             if np.isfinite(v): ys.append(v)
-        ys=np.array(ys); h_mc_q05.append(np.quantile(ys,0.05)); h_mc_q50.append(np.quantile(ys,0.50)); h_mc_q95.append(np.quantile(ys,0.95))
+        if len(ys)<30:
+            print(f"[flex-eval] warning: theta={th:.3f} has too few MC samples={len(ys)}")
+            h_mc_q05.append(np.nan); h_mc_q50.append(np.nan); h_mc_q95.append(np.nan)
+        else:
+            ys=np.array(ys); h_mc_q05.append(np.quantile(ys,0.05)); h_mc_q50.append(np.quantile(ys,0.50)); h_mc_q95.append(np.quantile(ys,0.95))
         xmu_n=(xmu-norm['x_mu_mean'])/norm['x_mu_std']; xt=torch.tensor(xmu_n,dtype=torch.float32,device=DEVICE); th_t=torch.tensor([[alpha,beta]],dtype=torch.float32,device=DEVICE)
         with torch.no_grad():
             _,w,mu1,s1,mu2,s2=net.forward_gmm(xt,th_t,sample=False)
             q=gmm2_quantile_torch(w,mu1,s1,mu2,s2,[0.05,0.5,0.95]).cpu().numpy().reshape(-1)
             h_bn_q05.append(q[0]); h_bn_q50.append(q[1]); h_bn_q95.append(q[2])
     poly_mc50=support_values_to_polygon(theta_list,np.array(h_mc_q50)); poly_bn50=support_values_to_polygon(theta_list,np.array(h_bn_q50)); poly_mc05=support_values_to_polygon(theta_list,np.array(h_mc_q05)); poly_mc95=support_values_to_polygon(theta_list,np.array(h_mc_q95)); poly_bn05=support_values_to_polygon(theta_list,np.array(h_bn_q05)); poly_bn95=support_values_to_polygon(theta_list,np.array(h_bn_q95))
+    for nm,poly in [("mc50",poly_mc50),("bn50",poly_bn50),("mc05",poly_mc05),("mc95",poly_mc95),("bn05",poly_bn05),("bn95",poly_bn95)]:
+        if len(poly)>=3:
+            ar=polygon_area(poly)
+            if ar<1e-6 or ar>1e3: print(f"[flex-eval] warning: polygon {nm} area abnormal {ar:.4e}")
     plt.figure(figsize=(8,7),dpi=130)
     for poly,lab,c,ls in [(poly_mc50,'MC median','k','-'),(poly_bn50,'B-PINN median','#d95f02','--'),(poly_mc05,'MC q05','0.4',':'),(poly_mc95,'MC q95','0.4',':'),(poly_bn05,'B-PINN q05','#1b9e77',':'),(poly_bn95,'B-PINN q95','#1b9e77',':')]:
         if len(poly)>2: plt.plot(np.r_[poly[:,0],poly[0,0]],np.r_[poly[:,1],poly[0,1]],ls,color=c,label=lab)
@@ -500,6 +518,8 @@ def polygon_area(poly):
     return 0.5*abs(np.dot(x,np.roll(y,-1))-np.dot(y,np.roll(x,-1)))
 
 def support_values_to_polygon(theta_list,h_values,eps=1e-9,do_convex_cleanup=True):
+    h_values=np.asarray(h_values,dtype=float)
+    if h_values.ndim!=1 or len(h_values)!=len(theta_list): return np.zeros((0,2))
     pts=[]
     for j in range(len(theta_list)):
         k=(j+1)%len(theta_list)
