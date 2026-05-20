@@ -957,12 +957,9 @@ def get_or_build_flex_dataset_cache(case):
         if DATASET_CACHE_MODE=="load_only":
             raise RuntimeError("dataset cache unavailable or mismatched under load_only mode")
     print("[dataset-cache] building dataset with OPF labels...")
-    if USE_DATASET_CACHE:
-        XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln=get_or_build_flex_dataset_cache(case)
-    else:
-        XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln = generate_flex_dataset(
-            case,NUM_SCENARIOS,MC_PER_SCENARIO,THETA_LIST,SEED_DATA
-        )
+    XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln = generate_flex_dataset(
+        case,NUM_SCENARIOS,MC_PER_SCENARIO,THETA_LIST,SEED_DATA
+    )
     save_flex_dataset_cache(XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln,meta_now)
     return XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln
 
@@ -1273,7 +1270,12 @@ def main():
     print(f'[run-mode] NUM_SCENARIOS={NUM_SCENARIOS}, MC_PER_SCENARIO={MC_PER_SCENARIO}, N_THETA={N_THETA}, EPOCHS={EPOCHS}')
     print(f'[run-mode] total_OPF_labels={NUM_SCENARIOS*MC_PER_SCENARIO*N_THETA}')
     print(f'[run-mode] USE_H_QUANTILE_LOSS={USE_H_QUANTILE_LOSS}, LAM_H_QUANTILE={LAM_H_QUANTILE}')
-    XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln=generate_flex_dataset(case,NUM_SCENARIOS,MC_PER_SCENARIO,THETA_LIST,SEED_DATA)
+    if USE_DATASET_CACHE:
+        XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln = get_or_build_flex_dataset_cache(case)
+    else:
+        XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active,alln = generate_flex_dataset(
+            case,NUM_SCENARIOS,MC_PER_SCENARIO,THETA_LIST,SEED_DATA
+        )
     summarize_active_patterns(active,alln,top_k=10)
     experiment_ready_check(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active)
     print('\n=== Support distribution atom/boundary diagnostic on training dataset ===')
