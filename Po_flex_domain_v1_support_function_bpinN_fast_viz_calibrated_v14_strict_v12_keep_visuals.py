@@ -89,9 +89,9 @@ SCALE_THETA_WEIGHT = 1.8
 SHAPE_THETA_WEIGHT = 1.5
 DEFAULT_THETA_WEIGHT = 1.0
 EXTRA_HARD_THETA_INIT = [2, 9, 3, 11]
-EXTRA_HARD_THETA_WEIGHT = 3.5
+EXTRA_HARD_THETA_WEIGHT = 3.0
 MODERATE_HARD_THETA_INIT = [7, 8, 6, 5]
-MODERATE_HARD_THETA_WEIGHT = 2.2
+MODERATE_HARD_THETA_WEIGHT = 2.0
 STABLE_HARD_THETA_INIT = []
 STABLE_HARD_THETA_WEIGHT = 1.5
 THETA_PROBLEM_WEIGHT_MAX = 5.0
@@ -116,12 +116,6 @@ USE_THETA_AFFINE_CALIBRATION = True
 THETA_AFFINE_SCALE_CLAMP = 0.5
 LAM_THETA_AFFINE_REG = 1e-4
 USE_VAL_ARMS_DYNAMIC_REWEIGHT = True
-USE_WORST_THETA_FINE_CAL = False
-WORST_THETA_FINE_CAL = []
-LAM_WORST_LOC_C = 0.10
-LAM_WORST_LOC_D = 0.15
-LAM_WORST_SCALE_C = 0.05
-LAM_WORST_SCALE_D = 0.08
 VAL_ARMS_REWEIGHT_START_EPOCH = 80
 VAL_ARMS_REWEIGHT_UPDATE_EVERY = 20
 VAL_ARMS_REWEIGHT_POWER = 1.5
@@ -710,37 +704,6 @@ def compute_h_dense_quantile_calibration_loss(net,XMU_scen,THETA_FEAT,QH_DENSE_E
     q_emp_t=torch.as_tensor(q_emp,dtype=torch.float32,device=DEVICE); q_pred=gmm_quantile_torch(w,mu,s,taus); d=(q_pred-q_emp_t).pow(2).mean(dim=1,keepdim=True)
     if theta_problem_weights is not None: d=d*torch.as_tensor(theta_problem_weights[tf].reshape(-1,1),dtype=torch.float32,device=DEVICE)
     return d.mean()
-def compute_worst_theta_fine_calibration_loss(net,XMU_scen,THETA_FEAT,QH_CAL_EMP,x_mu_mean,x_mu_std,h_mean,h_std,worst_theta_list,n_scenarios_sample,sample,rng,theta_problem_weights=None):
-    if (not USE_WORST_THETA_FINE_CAL) or XMU_scen.shape[0]==0: return torch.tensor(0.0,device=DEVICE),torch.tensor(0.0,device=DEVICE)
-    idx=[j for j in worst_theta_list if 0<=j<THETA_FEAT.shape[0]]
-    if not idx: return torch.tensor(0.0,device=DEVICE),torch.tensor(0.0,device=DEVICE)
-    ns=min(max(1,int(n_scenarios_sample)),XMU_scen.shape[0])
-    scen_idx=np.arange(XMU_scen.shape[0]) if ns==XMU_scen.shape[0] else rng.choice(XMU_scen.shape[0],size=ns,replace=False)
-    xmu=XMU_scen[scen_idx]
-    xt=torch.tensor((xmu-x_mu_mean)/x_mu_std,dtype=torch.float32,device=DEVICE)
-    loc_terms=[]; scale_terms=[]
-    wts=[]
-    for j in idx:
-        th=torch.tensor(THETA_FEAT[j:j+1],dtype=torch.float32,device=DEVICE).repeat(ns,1)
-        with torch.no_grad() if False else torch.enable_grad():
-            _,w,mu,sig=net.forward_gmm(xt,th,sample=sample)
-            q_pred=gmm_quantile_torch(w,mu,sig,CALIB_TAUS)
-        q_emp=np.asarray(QH_CAL_EMP)[scen_idx,j,:]
-        q_emp_t=torch.as_tensor(q_emp,dtype=q_pred.dtype,device=q_pred.device)
-        h_mean_t=torch.as_tensor(h_mean,dtype=q_pred.dtype,device=q_pred.device).reshape(1,1)
-        h_std_t=torch.as_tensor(h_std,dtype=q_pred.dtype,device=q_pred.device).reshape(1,1)
-        q_emp_norm=(q_emp_t-h_mean_t)/(h_std_t+1e-9)
-        pred_q50=q_pred[:,2:3]
-        emp_q50=q_emp_norm[:,2:3]
-        pred_span=q_pred[:,3:4]-q_pred[:,1:2]
-        emp_span=q_emp_norm[:,3:4]-q_emp_norm[:,1:2]
-        loc_terms.append((pred_q50-emp_q50).pow(2).mean()); scale_terms.append((pred_span-emp_span).pow(2).mean())
-        wts.append(float(theta_problem_weights[j]) if theta_problem_weights is not None else 1.0)
-    wt=torch.tensor(wts,dtype=torch.float32,device=DEVICE)
-    loc=torch.sum(torch.stack(loc_terms)*wt)/torch.sum(wt)
-    sca=torch.sum(torch.stack(scale_terms)*wt)/torch.sum(wt)
-    return loc,sca
-
 def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
     rng=np.random.default_rng(SEED_TRAIN); n_scen=XMU.shape[0]; n_val=max(1,int(0.1*n_scen)); idx=rng.permutation(n_scen); tr,va=idx[:-n_val],idx[-n_val:]
     def split(arr): return arr[tr],arr[va]
@@ -821,7 +784,7 @@ def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
             bsup=((p0h-yp0)/p0s).pow(2).mean()+((q0h-yq0)/q0s).pow(2).mean(); dsup=((pgh-ypg)/(net.pg_max_t-net.pg_min_t+1e-6)).pow(2).mean(); phys=physics_loss_flex(case,xr_raw,p0h,q0h,pgh,qgh,p_scale=p0s,q_scale=q0s); scons=(((th[:,0:1]*p0h+th[:,1:2]*q0h-yh)/(hs+1e-9))**2).mean()
             hq=torch.tensor(0.0,device=DEVICE); hcdf=torch.tensor(0.0,device=DEVICE)
             h_loc_cal=torch.tensor(0.0,device=DEVICE); h_mean_cal=torch.tensor(0.0,device=DEVICE); h_scale_cal=torch.tensor(0.0,device=DEVICE); h_std_cal=torch.tensor(0.0,device=DEVICE); h_tail_cal=torch.tensor(0.0,device=DEVICE)
-            h_dense_q_cal=torch.tensor(0.0,device=DEVICE); worst_loc_cal=torch.tensor(0.0,device=DEVICE); worst_scale_cal=torch.tensor(0.0,device=DEVICE)
+            h_dense_q_cal=torch.tensor(0.0,device=DEVICE)
             _,parts=compute_h_loc_scale_calibration_loss(net,XMU_tr,THETA_FEAT,QH_CAL_EMP_TR,H_MEAN_EMP_TR,H_STD_EMP_TR,xmu_mean,xmu_std,h_mean,h_std,n_scenarios_sample=cur_q_scen,n_thetas_sample=cur_q_theta,sample=False,rng=np.random.default_rng(SEED_TRAIN+300000*ep+b),theta_sampling_weights=theta_sampling_weights,theta_problem_weights=combined_theta_weights,taus=CALIB_TAUS,return_parts=False,h_theta_mean=H_THETA_MEAN_EMP_TR,h_theta_std=H_THETA_STD_EMP_TR,use_theta_wise_norm=USE_THETA_WISE_CALIB_NORMALIZATION)
             h_loc_cal,h_mean_cal,h_scale_cal,h_std_cal,h_tail_cal=parts['loc'],parts['mean'],parts['scale'],parts['std'],parts['tail']
             if cur_lam_dense_q>0:
