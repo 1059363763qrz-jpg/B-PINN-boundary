@@ -81,20 +81,20 @@ LAM_TAIL_CAL_D = 0.12
 LAM_MEAN_CAL_D = 0.12
 LAM_STD_CAL_D = 0.12
 USE_STATIC_ERROR_TYPE_WEIGHTS = True
-LOCATION_THETA_INIT = []
-SCALE_THETA_INIT = []
-SHAPE_THETA_INIT = []
-LOC_THETA_WEIGHT = 1.0
-SCALE_THETA_WEIGHT = 1.0
-SHAPE_THETA_WEIGHT = 1.0
+LOCATION_THETA_INIT = [7, 8, 6, 5, 3, 2, 10, 11, 9]
+SCALE_THETA_INIT = [7, 8, 6, 5, 9, 2]
+SHAPE_THETA_INIT = [3, 2, 10, 11, 9]
+LOC_THETA_WEIGHT = 2.0
+SCALE_THETA_WEIGHT = 1.8
+SHAPE_THETA_WEIGHT = 1.5
 DEFAULT_THETA_WEIGHT = 1.0
-EXTRA_HARD_THETA_INIT = []
+EXTRA_HARD_THETA_INIT = [2, 9, 3, 11]
 EXTRA_HARD_THETA_WEIGHT = 3.5
-MODERATE_HARD_THETA_INIT = []
+MODERATE_HARD_THETA_INIT = [7, 8, 6, 5]
 MODERATE_HARD_THETA_WEIGHT = 2.2
 STABLE_HARD_THETA_INIT = []
 STABLE_HARD_THETA_WEIGHT = 1.5
-THETA_PROBLEM_WEIGHT_MAX = 1.0
+THETA_PROBLEM_WEIGHT_MAX = 5.0
 USE_THETA_WISE_CALIB_NORMALIZATION = False
 THETA_STD_FLOOR = 1e-3
 USE_DENSE_QUANTILE_CALIBRATION = False
@@ -115,10 +115,9 @@ CALIBRATION_USE_DETERMINISTIC_MEAN = True
 USE_THETA_AFFINE_CALIBRATION = True
 THETA_AFFINE_SCALE_CLAMP = 0.5
 LAM_THETA_AFFINE_REG = 1e-4
-USE_VAL_ARMS_DYNAMIC_REWEIGHT = False
+USE_VAL_ARMS_DYNAMIC_REWEIGHT = True
 USE_WORST_THETA_FINE_CAL = False
 WORST_THETA_FINE_CAL = []
-USE_STATIC_ERROR_TYPE_WEIGHTS = False
 LAM_WORST_LOC_C = 0.10
 LAM_WORST_LOC_D = 0.15
 LAM_WORST_SCALE_C = 0.05
@@ -152,7 +151,7 @@ FAST_TOTAL_EPOCHS = FAST_STAGE_A_EPOCHS + FAST_STAGE_B_EPOCHS + FAST_STAGE_C_EPO
 USE_STAGE_E_AFFINE_ONLY_CALIBRATION = False
 FAST_STAGE_E_EPOCHS = 80
 EPOCHS = FAST_TOTAL_EPOCHS + (FAST_STAGE_E_EPOCHS if USE_STAGE_E_AFFINE_ONLY_CALIBRATION else 0)
-USE_THETA_REWEIGHT = False
+USE_THETA_REWEIGHT = True
 THETA_REWEIGHT_START_EPOCH = 100
 THETA_REWEIGHT_UPDATE_EVERY = 25
 THETA_REWEIGHT_POWER = 1.5
@@ -163,8 +162,8 @@ CDF_GRID_TAUS = [0.01,0.03,0.05,0.10,0.20,0.30,0.40,0.50,0.60,0.70,0.80,0.90,0.9
 CDF_STANDARD_GRID = [-2.5,-2.0,-1.5,-1.0,-0.5,0.0,0.5,1.0,1.5,2.0,2.5]
 
 ATOM_MASS_THRESHOLD = 0.20
-VIS_VERSION = "v14_strict"
-PLOT_PREFIX = "v14_strict"
+VIS_VERSION = "v14"
+PLOT_PREFIX = "v14"
 POSSIBLE_ATOM_MASS_THRESHOLD = 0.10
 HIGH_ARMS_THRESHOLD = 10.0
 STABILIZE_OPF_DISPATCH, SUPPORT_EPS, W_QG_STAB, W_PG_STAB, W_PQ0_STAB = True, 1e-5, 1.0, 0.01, 1e-5
@@ -193,11 +192,11 @@ LOAD_NORM_PATH = "training_results/expB_v7_extendedCD_best_seed0_norm.pkl"
 LOAD_CONFIG_PATH = "training_results/expB_v7_extendedCD_best_seed0_config.json"
 TRAINING_RUN_TAG = "v14_strict_v12_keep_visuals"
 RUN_FULL_OPF_EVAL = False
+RUN_FLEX_DOMAIN_PLOTS = True
 MULTI_SCENARIO_FORMAL_EVAL = True
 N_FORMAL_EVAL_SCENARIOS = 10
 MC_EVAL_PER_SCENARIO = 100
 FORMAL_EVAL_REBUILD_CACHE = False
-RUN_FLEX_DOMAIN_PLOTS = True
 FORMAL_EVAL_CACHE_PATH = "all_theta_eval_cache_multiscen_v9.npz"
 SAVE_FORMAL_ACTIVE_SIGNATURES = True
 POLYGON_MIN_AREA = 1e-5
@@ -327,11 +326,7 @@ def summarize_active_patterns(active_records,all_names,top_k=10):
     if not active_records: return
     cnt=Counter([r['signature'] for r in active_records]); n=len(active_records)
     print(f'[active] total={n}, unique={len(cnt)}')
-    rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    rows=[]
     YH_eval=[]
     XMU_eval=[]
     for i,(sig,c) in enumerate(cnt.most_common(top_k),1):
@@ -769,14 +764,31 @@ def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
     xr_raw_t=to(xr_f); xmu_tv,xr_tv,th_tv,yh_tv,yp0_tv,yq0_tv,ypg_tv,yqg_tv,yt_tv=map(to,[ (xmu_v-xmu_mean)/xmu_std, (xr_v-xr_mean)/xr_std, th_v,yh_v,yp0_v,yq0_v,ypg_v,yqg_v,yt_v ]); xr_raw_v=to(xr_v)
     net=BayesFlexGMM2SupportNet(XMU.shape[1],case).to(DEVICE); n=xmu_t.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE
     hm,hs,p0m,p0s,q0m,q0s,tm,ts=to(h_mean),to(h_std),to(p0_mean),to(p0_std),to(q0_mean),to(q0_std),to(t_mean),to(t_std)
-    T=THETA_FEAT.shape[0]
-    theta_sampling_weights=np.ones(T,dtype=float)
-    theta_problem_weights=np.ones(T,dtype=float)
-    combined_theta_weights=np.ones(T,dtype=float)
-    print("[theta-problem-weights-v14-strict]")
+    T=THETA_FEAT.shape[0]; theta_sampling_weights=np.ones(T,dtype=float); theta_problem_weights=np.ones(T,dtype=float)*DEFAULT_THETA_WEIGHT
+    for j in LOCATION_THETA_INIT:
+        if 0<=j<T: theta_problem_weights[j]=max(theta_problem_weights[j],LOC_THETA_WEIGHT)
+    for j in SCALE_THETA_INIT:
+        if 0<=j<T: theta_problem_weights[j]=max(theta_problem_weights[j],SCALE_THETA_WEIGHT)
+    for j in SHAPE_THETA_INIT:
+        if 0<=j<T: theta_problem_weights[j]=max(theta_problem_weights[j],SHAPE_THETA_WEIGHT)
+    for j in EXTRA_HARD_THETA_INIT:
+        if 0<=j<T: theta_problem_weights[j]=max(theta_problem_weights[j],EXTRA_HARD_THETA_WEIGHT)
+    for j in MODERATE_HARD_THETA_INIT:
+        if 0<=j<T: theta_problem_weights[j]=max(theta_problem_weights[j],MODERATE_HARD_THETA_WEIGHT)
+    for j in STABLE_HARD_THETA_INIT:
+        if 0<=j<T: theta_problem_weights[j]=max(theta_problem_weights[j],STABLE_HARD_THETA_WEIGHT)
+    theta_problem_weights=np.clip(theta_problem_weights,0.0,THETA_PROBLEM_WEIGHT_MAX)
+    print("[theta-problem-weights-v14]")
     print("theta_idx, final_weight, reason")
     for jj in range(T):
-        print(f"{jj},1.000,uniform")
+        bt="default"
+        if jj in LOCATION_THETA_INIT: bt="location"
+        if jj in SCALE_THETA_INIT: bt="scale"
+        if jj in SHAPE_THETA_INIT: bt="shape"
+        if jj in MODERATE_HARD_THETA_INIT: bt="moderate_hard"
+        if jj in EXTRA_HARD_THETA_INIT: bt="extra_hard"
+        print(f"{jj},{float(theta_problem_weights[jj]):.3f},{bt}")
+    theta_problem_weights/=theta_problem_weights.mean()+1e-9; combined_theta_weights=theta_problem_weights.copy()
     best_state=None; best_score=np.inf; no_improve=0; patience=25; prev_stage=None; opt=None; val_arms_mean_recent=100.0; val_arms_max_recent=100.0
     for ep in range(EPOCHS):
         if ep+1<=FAST_STAGE_A_EPOCHS: stage='A'
@@ -825,6 +837,12 @@ def train_bayes_flex_gmm2(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG):
             val_loc_cal,val_scale_cal,val_tail_cal=calv['loc'],calv['scale'],calv['tail']
             val_dense_q_cal=compute_h_dense_quantile_calibration_loss(net,XMU_va,THETA_FEAT,QH_DENSE_EMP_VAL,xmu_mean,xmu_std,h_mean,h_std,h_theta_mean=H_THETA_MEAN_EMP_VAL,h_theta_std=H_THETA_STD_EMP_VAL,n_scenarios_sample=min(cur_q_scen,max(1,XMU_va.shape[0])),sample=False,theta_problem_weights=combined_theta_weights,taus=DENSE_Q_TAUS,use_theta_wise_norm=USE_THETA_WISE_CALIB_NORMALIZATION)
             bsv=torch.tensor(0.0,device=DEVICE); phv=torch.tensor(0.0,device=DEVICE); hqv=torch.tensor(0.0,device=DEVICE); hcdfv=torch.tensor(0.0,device=DEVICE)
+        if USE_VAL_ARMS_DYNAMIC_REWEIGHT and (ep+1)>=VAL_ARMS_REWEIGHT_START_EPOCH and ((ep+1)%VAL_ARMS_REWEIGHT_UPDATE_EVERY==0) and stage in ['C','D','E']:
+            arms=compute_cached_val_arms_by_theta_fast(net,{"x_mu_mean":xmu_mean,"x_mu_std":xmu_std,"h_mean":h_mean,"h_std":h_std},XMU_va,THETA_FEAT,THETA_LIST,YH_va,n_grid=VAL_ARMS_FAST_GRID,max_scenarios=30,sample=False)
+            theta_sampling_weights,updated,info=safe_update_theta_weights_from_arms(arms,theta_sampling_weights)
+            if updated:
+                combined_theta_weights=theta_problem_weights*theta_sampling_weights; combined_theta_weights/=combined_theta_weights.mean()+1e-9
+                val_arms_mean_recent=info['mean']; val_arms_max_recent=info['max']
         vscore=1.0*val_arms_mean_recent/100+0.6*val_arms_max_recent/100+float(hcdfv)+0.5*float(hqv)+float(val_loc_cal)+float(val_scale_cal)+0.5*float(val_tail_cal)+float(val_dense_q_cal)+0.2*float(bsv)+0.2*float(phv)
         if vscore<best_score: best_score=vscore; best_state={k:v.detach().cpu().clone() for k,v in net.state_dict().items()}; no_improve=0
         else: no_improve+=1
@@ -849,11 +867,7 @@ def compute_cached_val_arms_by_theta_fast(net,norm,XMU_val,THETA_FEAT,theta_list
     return out
 
 def eval_cached_validation_cdf_arms(net,norm,XMU_val,THETA_FEAT,theta_list,YH_val,save_prefix="cached_val_cdf_arms_v14",n_grid=300,n_posterior_samples=0):
-    hm,hs=float(norm['h_mean'][0,0]),float(norm['h_std'][0,0]); rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    hm,hs=float(norm['h_mean'][0,0]),float(norm['h_std'][0,0]); rows=[]
     for j,th in enumerate(theta_list):
         arms_l=[]; ks_l=[]; q05_l=[]; q50_l=[]; q95_l=[]; mean_l=[]; std_l=[]; sp_l=[]; sr_l=[]
         for i in range(XMU_val.shape[0]):
@@ -1018,11 +1032,7 @@ def eval_multiple_flex_scenarios(case,net,norm,theta_list):
 
 def eval_all_theta_cdf_arms(case,net,norm,theta_list,mc_eval=400,save_cache_path='all_theta_eval_cache.npz'):
     rng=np.random.default_rng(SEED_EVAL+222); pdm,qdm,prm,qrm=sample_scenario_means(case,rng); xmu=make_feature_vector(case,pdm,prm).reshape(1,-1)
-    rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    rows=[]
     YH_by_theta={}
     for j,th in enumerate(theta_list):
         alpha,beta=np.cos(th),np.sin(th); ys=[]
@@ -1060,7 +1070,7 @@ def eval_all_theta_cdf_arms(case,net,norm,theta_list,mc_eval=400,save_cache_path
     plt.figure(figsize=(9,4.2),dpi=260); plt.bar([r[0] for r in rows],[r[2] for r in rows],color=colors); plt.axhline(arr.mean(),color='#1d4ed8',ls='--',lw=1.5,label='mean'); plt.axhline(arr.max(),color='#ea580c',ls=':',lw=1.8,label='max'); plt.xlabel('theta idx',fontsize=12); plt.ylabel('ARMS (%)',fontsize=12); plt.title('All-theta CDF ARMS of support-function distribution'); plt.legend(); plt.tight_layout(); plt.savefig('FlexDomain_all_theta_ARMS_bar_v14.png',dpi=280)
     return {'rows':rows,'xmu':xmu,'cache':save_cache_path}
 
-def eval_all_theta_cdf_arms_multiscenario(case,net,norm,theta_list,n_eval_scenarios=10,mc_eval_per_scenario=400,seed=SEED_EVAL,cache_path="all_theta_eval_cache_multiscen_v9.npz",rebuild_cache=True,save_prefix="all_theta_multiscen_v14_strict"):
+def eval_all_theta_cdf_arms_multiscenario(case,net,norm,theta_list,n_eval_scenarios=10,mc_eval_per_scenario=400,seed=SEED_EVAL,cache_path="all_theta_eval_cache_multiscen_v9.npz",rebuild_cache=True,save_prefix="all_theta_multiscen_v14"):
     if (not rebuild_cache) and Path(cache_path).exists():
         d=np.load(cache_path,allow_pickle=True); XMU_eval,YH_eval=d["XMU_eval"],d["YH_eval"]
     else:
@@ -1077,11 +1087,7 @@ def eval_all_theta_cdf_arms_multiscenario(case,net,norm,theta_list,n_eval_scenar
         XMU_eval=np.array(XMU_eval,dtype=float); np.savez(cache_path,XMU_eval=XMU_eval,YH_eval=YH_eval)
     S,T=YH_eval.shape[0],YH_eval.shape[2]
     arms_matrix=np.full((S,T),np.nan)
-    rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    rows=[]
     for sidx in range(S):
         for j,th in enumerate(theta_list):
             m=compute_pair_cdf_metrics_unified(net,norm,XMU_eval[sidx:sidx+1],THETA_FEAT[j:j+1],YH_eval[sidx,:,j],n_grid=300,posterior_samples=EVAL_THETA_SAMPLES,sample_mode="posterior_mean",z_margin_abs=0.2)
@@ -1431,23 +1437,11 @@ def diagnose_support_distribution_atoms(YH,THETA_FEAT,theta_list,active_records=
         with open(arms_csv_path,'r',encoding='utf-8') as f:
             r=_csv.DictReader(f)
             for row in r: arms_map[int(row['theta_idx'])]=float(row['arms_pct'])
-    rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    rows=[]
     YH_eval=[]
-    XMU_eval=[]; scene_rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    XMU_eval=[]; scene_rows=[]
     YH_eval=[]
-    XMU_eval=[]; active_rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    XMU_eval=[]; active_rows=[]
     YH_eval=[]
     XMU_eval=[]
     for j in range(T):
@@ -1542,15 +1536,7 @@ def analyze_cdf_error_decomposition(net,norm,XMU_eval,THETA_FEAT,theta_list,YH_e
     if active_diag_csv_path and Path(active_diag_csv_path).exists():
         with open(active_diag_csv_path,'r',encoding='utf-8') as f:
             for r in csv.DictReader(f): rec_map[int(r['theta_idx'])]=r
-    rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]; qrows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    rows=[]; qrows=[]
     hmean=float(norm['h_mean'][0,0]); hstd=float(norm['h_std'][0,0])
     for j,th in enumerate(theta_list):
         h_mc=np.asarray(YH_eval[:,:,j].reshape(-1),dtype=float)
@@ -1624,11 +1610,7 @@ def analyze_cdf_error_decomposition(net,norm,XMU_eval,THETA_FEAT,theta_list,YH_e
     from collections import defaultdict
     grp=defaultdict(list)
     for r in rows: grp[r['primary_error_type']].append(r)
-    srows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    srows=[]
     for k,v in grp.items():
         srows.append({'primary_error_type':k,'count':len(v),'mean_arms':float(np.mean([a['arms_pct'] for a in v])),'max_arms':float(np.max([a['arms_pct'] for a in v])),'mean_abs_median_err':float(np.mean([abs(a.get('q50_err',0.0)) for a in v])),'mean_abs_tail_span_err':float(np.mean([abs(a['tail_span_err']) for a in v])),'mean_std_ratio':float(np.mean([a['std_ratio'] for a in v])),'theta_indices':';'.join([str(a['theta_idx']) for a in v])})
     with open(f'{save_prefix}_summary.csv','w',newline='',encoding='utf-8') as f: w=_csv.DictWriter(f,fieldnames=list(srows[0].keys())); w.writeheader(); w.writerows(srows)
@@ -1718,11 +1700,7 @@ def compute_pair_cdf_metrics_unified(net,norm,xmu,theta_feat,h_mc,n_grid=300,pos
     return dict(arms_pct=float(arms),ks_stat=float(ks),signed_cdf_bias=float(sb),abs_cdf_bias=float(ab),lower_cdf_arms=float(lower),middle_cdf_arms=float(middle),upper_cdf_arms=float(upper),q05_err=float(q05),q50_err=float(q50),q95_err=float(q95),span95_err=float(span95),mean_err=float(bp_mean-mc_mean),std_err=float(bp_std-mc_std),std_ratio=float(bp_std/(mc_std+1e-9)),F_mc=F_mc,F_bp=F_bp,z=z,qbp=qbp,qmc=qmc,bp_mean=bp_mean,bp_std=bp_std,mc_mean=mc_mean,mc_std=mc_std)
 
 def analyze_cdf_error_decomposition_multiscenario(net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eval,save_prefix="cdf_error_decomp_multiscen_v14",cdf_grid_size=300,n_posterior_samples=EVAL_THETA_SAMPLES):
-    rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],]
+    rows=[]
     for sidx in range(YH_eval.shape[0]):
         for j,th in enumerate(theta_list):
             h_mc=np.asarray(YH_eval[sidx,:,j],dtype=float)
@@ -1785,7 +1763,7 @@ def generate_worst_theta_diagnostics(pair_csv,theta_csv,save_path='worst_theta_d
     out.to_csv(save_path,index=False)
     print('[worst-theta-diagnostics]')
 
-def plot_worst_pair_cdfs(pair_csv,net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eval,save_prefix="all_theta_multiscen_v14_strict"):
+def plot_worst_pair_cdfs(pair_csv,net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eval,save_prefix="all_theta_multiscen_v14"):
 
     import pandas as pd
     hm=float(norm['h_mean'][0,0]); hs=float(norm['h_std'][0,0])
@@ -1806,6 +1784,32 @@ def plot_worst_pair_cdfs(pair_csv,net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eva
     fig,axs=plt.subplots(2,3,figsize=(14,8),dpi=220)
     for ax,(_,r) in zip(axs.ravel(),df.head(6).iterrows()): one(ax,r); ax.grid(alpha=0.2)
     plt.tight_layout(); plt.savefig(f'{save_prefix}_worst6_cdf_grid.png',dpi=260)
+
+def plot_worst6_flex_domains_from_pair_csv(pair_csv,case,net,norm,theta_list):
+    if (not Path(pair_csv).exists()) or (not Path(FORMAL_EVAL_CACHE_PATH).exists()):
+        print("[warning] skip FlexDomain_worst6_pairs_v14_strict.png (missing pair csv or formal cache).")
+        return
+    df=pd.read_csv(pair_csv).sort_values('arms_pct',ascending=False).head(6)
+    if len(df)==0: return
+    XMU_eval=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True)['XMU_eval']
+    fig,axs=plt.subplots(2,3,figsize=(14,8),dpi=220)
+    for ax,(_,r) in zip(axs.ravel(),df.iterrows()):
+        sidx=int(r['scenario_idx']); tidx=int(r['theta_idx']); arms=float(r['arms_pct']); xmu=XMU_eval[sidx]
+        hs_mc=[]; hs_bp=[]
+        for th in theta_list:
+            hs_mc.append(support_point_mc_from_xmu(case,xmu,float(th),mc_eval=80,seed=SEED_EVAL+sidx))
+            xt=torch.tensor((xmu.reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std'],dtype=torch.float32,device=DEVICE)
+            th_t=torch.tensor([[np.cos(th),np.sin(th)]],dtype=torch.float32,device=DEVICE)
+            with torch.no_grad():
+                _,w,mu,s=net.forward_gmm(xt,th_t,sample=False)
+                qn=gmm_quantile_torch(w,mu,s,[0.5]).cpu().numpy().reshape(-1)[0]
+            hs_bp.append(float(norm['h_mean'][0,0])+float(norm['h_std'][0,0])*qn)
+        pm=support_values_to_polygon(theta_list,np.array(hs_mc)); pb=support_values_to_polygon(theta_list,np.array(hs_bp))
+        if pm is not None and len(pm)>2: ax.plot(np.r_[pm[:,0],pm[0,0]],np.r_[pm[:,1],pm[0,1]],c='#0f766e',lw=1.8,label='OPF/MC')
+        if pb is not None and len(pb)>2: ax.plot(np.r_[pb[:,0],pb[0,0]],np.r_[pb[:,1],pb[0,1]],c='#7c3aed',lw=1.6,label='B-PINN q50')
+        ax.set_title(f"scenario={sidx}, worst theta={tidx}, ARMS={arms:.2f}%"); ax.grid(alpha=0.2); ax.axis('equal')
+    axs.ravel()[0].legend(fontsize=8)
+    plt.tight_layout(); plt.savefig('FlexDomain_worst6_pairs_v14_strict.png',dpi=260)
 
 def write_polygon_diag_csv(path='polygon_reconstruction_diagnostics_v10.csv'):
     import pandas as pd
@@ -1832,7 +1836,7 @@ def check_multiscen_decomp_consistency(decomp_pair_csv="cdf_error_decomp_multisc
 
 
 
-def compare_v14_against_v12_v13(v14_pair_csv='cdf_error_decomp_multiscen_v14_strict_by_pair.csv'):
+def compare_v14_against_v12_v13(v14_pair_csv='cdf_error_decomp_multiscen_v14_by_pair.csv'):
     if (not Path(v14_pair_csv).exists()) or (not Path('cdf_error_decomp_multiscen_v12_by_pair.csv').exists()) or (not Path('cdf_error_decomp_multiscen_v13_by_pair.csv').exists()):
         print('[v14-compare] skipped (missing csv).'); return
     v12=pd.read_csv('cdf_error_decomp_multiscen_v12_by_pair.csv')
@@ -1872,7 +1876,7 @@ def compare_v14_against_v12_v13(v14_pair_csv='cdf_error_decomp_multiscen_v14_str
     w6v12=np.sort(m['arms_v12'].values)[-6:]; w6v13=np.sort(m['arms_v13'].values)[-6:]; w6v14=np.sort(m['arms_v14'].values)[-6:]
     print(f"worst6 mean v12/v13/v14 = {np.mean(w6v12):.4f}/{np.mean(w6v13):.4f}/{np.mean(w6v14):.4f}")
 
-def finalize_v14_strict_checkpoint(net,norm,cached_stats,external_stats):
+def finalize_v14_checkpoint(net,norm,cached_stats,external_stats):
     Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True)
     ts=datetime.now().strftime("%Y%m%d_%H%M%S")
     base=f"{TRAINING_RESULT_DIR}/{TRAINING_RUN_TAG}_{ts}"
@@ -1883,17 +1887,17 @@ def finalize_v14_strict_checkpoint(net,norm,cached_stats,external_stats):
     with open(config_path,'w',encoding='utf-8') as f: json.dump(cfg,f,ensure_ascii=False,indent=2)
     selection_score=float(external_stats['external_mean_arms']+0.30*external_stats['external_q90_arms']+0.20*cached_stats['cached_val_mean_arms'])
     metrics={**cfg,**cached_stats,**external_stats,'selection_score':selection_score,'model_path':model_path,'norm_path':norm_path,'config_path':config_path}
-    with open(f"{TRAINING_RESULT_DIR}/v14_strict_metrics.json",'w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
-    best_metrics_path=Path(TRAINING_RESULT_DIR)/'v14_strict_best_metrics.json'
+    with open(f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_metrics.json",'w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
+    best_metrics_path=Path(TRAINING_RESULT_DIR)/'v14_rollback_v12_strategy_keep_visuals_best_metrics.json'
     best_score=float('inf')
     if best_metrics_path.exists():
         try: best_score=float(json.loads(best_metrics_path.read_text(encoding='utf-8')).get('selection_score',float('inf')))
         except Exception: best_score=float('inf')
     update_best=(selection_score<best_score)
     if update_best:
-        shutil.copy2(model_path,f"{TRAINING_RESULT_DIR}/v14_strict_best_model.pt")
-        shutil.copy2(norm_path,f"{TRAINING_RESULT_DIR}/v14_strict_best_norm.pkl")
-        shutil.copy2(config_path,f"{TRAINING_RESULT_DIR}/v14_strict_best_config.json")
+        shutil.copy2(model_path,f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_best_model.pt")
+        shutil.copy2(norm_path,f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_best_norm.pkl")
+        shutil.copy2(config_path,f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_best_config.json")
         with open(best_metrics_path,'w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
     print('[v14-checkpoint]')
     print(f"cached_val_mean={cached_stats['cached_val_mean_arms']:.4f}")
@@ -1907,10 +1911,6 @@ def finalize_v14_strict_checkpoint(net,norm,cached_stats,external_stats):
 
 def write_visualization_manifest_v14_strict():
     rows=[
-['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景MC与B-PINN域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','q05/q50/q95概率域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','多实现灵活域云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整域对比','if pair csv exists','v14_strict'],
 ['cached_val_cdf_arms_v14.csv','cached validation','eval_cached_validation_cdf_arms','每个theta验证ARMS表','after training','v14'],
 ['cached_val_cdf_arms_v14_bar.png','cached validation','eval_cached_validation_cdf_arms','每个theta验证ARMS柱状图','after training','v14'],
 ['FlexDomain_CDF_selected_directions_v14.png','flexdomain','eval_and_plot_flex_domain','方向CDF对比','if enabled','v14'],
@@ -1918,8 +1918,10 @@ def write_visualization_manifest_v14_strict():
 ['FlexDomain_MC_quantile_domains_v14.png','flexdomain','eval_and_plot_flex_domain','MC分位域','if enabled','v14'],
 ['FlexDomain_BPINN_quantile_domains_v14.png','flexdomain','eval_and_plot_flex_domain','BPINN分位域','if enabled','v14'],
 ['FlexDomain_all_theta_ARMS_bar_v14.png','flexdomain','eval_all_theta_cdf_arms_multiscenario','全theta ARMS柱状图','after formal eval','v14'],
-['FlexDomain_probability_overlay_v14_strict.png','flexdomain','eval_and_plot_flex_domain_posterior','后验叠加','if enabled','v14'],
-['FlexDomain_realization_cloud_v14_strict.png','flexdomain','eval_and_plot_realization_cloud','实现云图','if enabled','v14'],
+['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','概率灵活域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
+['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','灵活域实现云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
+['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景真实/预测灵活域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
+['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整灵活域对比','if pair csv exists','v14_strict'],
 ['support_atom_mass_by_theta_v14.png','atom diagnostic','diagnose_support_distribution_atoms','atom质量','always','v14'],
 ['support_scene_atom_ratio_by_theta_v14.png','atom diagnostic','diagnose_support_distribution_atoms','场景atom比例','always','v14'],
 ['support_distribution_histograms_worst_theta_v14.png','atom diagnostic','diagnose_support_distribution_atoms','最差theta分布直方图','always','v14'],
@@ -1932,46 +1934,18 @@ def write_visualization_manifest_v14_strict():
 ['cdf_bias_vs_uncertainty_scatter_v14.png','cdf decomp','analyze_cdf_error_decomposition','bias vs uncertainty','after decomp','v14'],
 ['all_theta_multiscen_v14_worst_pair_cdf.png','worst pair CDF','plot_worst_pair_cdfs','最差pair CDF','after formal cache eval','v14'],
 ['all_theta_multiscen_v14_worst6_cdf_grid.png','worst pair CDF','plot_worst_pair_cdfs','最差6个CDF','after formal cache eval','v14'],
-['cdf_error_decomp_multiscen_v14_strict_by_pair.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','pair级误差表','after formal cache eval','v14'],
-['cdf_error_decomp_multiscen_v14_strict_by_theta.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','theta汇总','after formal cache eval','v14'],
-['cdf_error_decomp_multiscen_v14_strict_by_scenario.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','scenario汇总','after formal cache eval','v14'],
+['cdf_error_decomp_multiscen_v14_by_pair.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','pair级误差表','after formal cache eval','v14'],
+['cdf_error_decomp_multiscen_v14_by_theta.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','theta汇总','after formal cache eval','v14'],
+['cdf_error_decomp_multiscen_v14_by_scenario.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','scenario汇总','after formal cache eval','v14'],
 ['cdf_error_decomp_multiscen_v14_summary.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','总体汇总','after formal cache eval','v14'],
 ['worst_theta_diagnostics_v14.csv','diagnostic','generate_worst_theta_diagnostics','worst theta诊断','after formal cache eval','v14'],
 ['scenario_generalization_diagnostics_v14.csv','diagnostic','diagnose_scenario_coverage_shift','场景覆盖诊断','after formal cache eval','v14'],
-['v14_strict_vs_v12_v13_multiscen_comparison.csv','comparison','compare_v14_against_v12_v13','v14对比v12/v13外部多场景对比','after formal cache eval','v14']
+['v14_strict_vs_v12_v13_multiscen_comparison.csv','comparison','compare_v14_against_v12_v13','v14_strict对比v12/v13外部多场景对比','after formal cache eval','v14_strict']
 ]
     import csv
     with open('visualization_manifest_v14_strict.csv','w',newline='',encoding='utf-8') as f:
         w=csv.writer(f); w.writerow(['filename','category','function_name','purpose','generated_when','version_status']); w.writerows(rows)
     print('[visualization-manifest-v14-strict] saved visualization_manifest_v14_strict.csv')
-
-
-def plot_worst6_flex_domains_from_pair_csv(pair_csv,case,net,norm,theta_list):
-    if not Path(pair_csv).exists():
-        print(f"[warning] {pair_csv} missing; skip FlexDomain_worst6_pairs_v14_strict.png")
-        return
-    df=pd.read_csv(pair_csv).sort_values('arms_pct',ascending=False).head(6)
-    if len(df)==0: return
-    fig,axes=plt.subplots(2,3,figsize=(14,8),dpi=220); axes=axes.reshape(-1)
-    d=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True) if Path(FORMAL_EVAL_CACHE_PATH).exists() else None
-    if d is None: print('[warning] formal cache missing; skip FlexDomain_worst6_pairs_v14_strict.png'); return
-    XMU_eval=d['XMU_eval']
-    for k,(_,r) in enumerate(df.iterrows()):
-        ax=axes[k]; si=int(r['scenario_idx']); ti=int(r['theta_idx']); arms=float(r['arms_pct'])
-        xmu=XMU_eval[si]
-        hs_mc=[]; hs_bp=[]
-        for th in theta_list:
-            hs_mc.append(support_point_mc_from_xmu(case,xmu,float(th),mc_eval=80,seed=SEED_EVAL+si))
-            xt=torch.tensor((xmu.reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std'],dtype=torch.float32,device=DEVICE)
-            tt=torch.tensor([[np.cos(th),np.sin(th)]],dtype=torch.float32,device=DEVICE)
-            with torch.no_grad(): _,w,mu,s=net.forward_gmm(xt,tt,sample=False); qn=gmm_quantile_torch(w,mu,s,[0.5]).cpu().numpy().reshape(-1)[0]
-            hs_bp.append(float(norm['h_mean'][0,0])+float(norm['h_std'][0,0])*qn)
-        pm=support_values_to_polygon(theta_list,np.array(hs_mc)); pb=support_values_to_polygon(theta_list,np.array(hs_bp))
-        if pm is not None and len(pm)>2: ax.plot(np.r_[pm[:,0],pm[0,0]],np.r_[pm[:,1],pm[0,1]],c='#0f766e',lw=1.8,label='OPF/MC')
-        if pb is not None and len(pb)>2: ax.plot(np.r_[pb[:,0],pb[0,0]],np.r_[pb[:,1],pb[0,1]],c='#7c3aed',lw=1.5,label='B-PINN q50')
-        ax.set_title(f's{si} θ{ti} ARMS={arms:.2f}%'); ax.grid(alpha=0.2); ax.axis('equal')
-    for j in range(len(df),6): axes[j].axis('off')
-    axes[0].legend(fontsize=8); plt.tight_layout(); plt.savefig('FlexDomain_worst6_pairs_v14_strict.png',dpi=260)
 
 def main():
     case=build_ieee33_case()
@@ -2010,7 +1984,7 @@ def main():
             print(f"[eval-only-cached-val] mean={np.nanmean(vals):.4f} median={np.nanmedian(vals):.4f} max={np.nanmax(vals):.4f} worst3={np.argsort(-vals)[:3].tolist()}")
             Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True)
             metrics={'cached_val_mean_arms':float(np.nanmean(vals)),'cached_val_max_arms':float(np.nanmax(vals)),'worst3':np.argsort(-vals)[:3].tolist(),'timestamp':datetime.now().isoformat(),'model_path':LOAD_MODEL_PATH if not RUN_TRAINING else 'trained_in_run'}
-            with open('training_results/v14_strict_metrics.json','w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
+            with open('training_results/v14_rollback_v12_strategy_keep_visuals_metrics.json','w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
             if np.nanmean(vals)>15 or np.nanmax(vals)>25:
                 print("[eval-only-warning] loaded model cached validation ARMS is high; formal multiscen evaluation may be poor.")
     if RUN_SANITY_CHECKS: flex_realization_sanity_check(case,net,norm,THETA_LIST)
@@ -2018,10 +1992,10 @@ def main():
         eval_and_plot_flex_domain(case,net,norm,THETA_LIST)
         eval_and_plot_flex_domain_posterior(case,net,norm,THETA_LIST)
         eval_and_plot_realization_cloud(case,net,norm,THETA_LIST)
-        eval_and_plot_realization_cloud(case,net,norm,THETA_LIST)
+    if RUN_FULL_OPF_EVAL:
         eval_and_plot_direction_cdfs(case,net,norm,THETA_LIST)
         if MULTI_SCENARIO_FORMAL_EVAL:
-            eval_pack=eval_all_theta_cdf_arms_multiscenario(case,net,norm,THETA_LIST,n_eval_scenarios=N_FORMAL_EVAL_SCENARIOS,mc_eval_per_scenario=MC_EVAL_PER_SCENARIO,cache_path=FORMAL_EVAL_CACHE_PATH,rebuild_cache=FORMAL_EVAL_REBUILD_CACHE,save_prefix="all_theta_multiscen_v14_strict")
+            eval_pack=eval_all_theta_cdf_arms_multiscenario(case,net,norm,THETA_LIST,n_eval_scenarios=N_FORMAL_EVAL_SCENARIOS,mc_eval_per_scenario=MC_EVAL_PER_SCENARIO,cache_path=FORMAL_EVAL_CACHE_PATH,rebuild_cache=FORMAL_EVAL_REBUILD_CACHE,save_prefix="all_theta_multiscen_v14")
             formal_active_rebuilt = FORMAL_EVAL_REBUILD_CACHE
         else:
             eval_pack=eval_all_theta_cdf_arms(case,net,norm,THETA_LIST)
@@ -2064,19 +2038,20 @@ def main():
         XMU_eval=XMU; YH_eval=YH
     if MULTI_SCENARIO_FORMAL_EVAL and Path(FORMAL_EVAL_CACHE_PATH).exists():
         d=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True); XMU_eval=d['XMU_eval']; YH_eval=d['YH_eval']
-        pair_df,_,_,_=analyze_cdf_error_decomposition_multiscenario(net,norm,XMU_eval,THETA_FEAT,THETA_LIST,YH_eval,save_prefix='cdf_error_decomp_multiscen_v14_strict',cdf_grid_size=300,n_posterior_samples=EVAL_THETA_SAMPLES)
-        scenario_src='cdf_error_decomp_multiscen_v14_strict_by_scenario.csv' if Path('cdf_error_decomp_multiscen_v14_strict_by_scenario.csv').exists() else ('all_theta_multiscen_v9_by_scenario_summary.csv' if Path('all_theta_multiscen_v9_by_scenario_summary.csv').exists() else 'cdf_error_decomp_multiscen_v14_strict_by_scenario.csv')
+        pair_df,_,_,_=analyze_cdf_error_decomposition_multiscenario(net,norm,XMU_eval,THETA_FEAT,THETA_LIST,YH_eval,save_prefix='cdf_error_decomp_multiscen_v14',cdf_grid_size=300,n_posterior_samples=EVAL_THETA_SAMPLES)
+        scenario_src='cdf_error_decomp_multiscen_v14_by_scenario.csv' if Path('cdf_error_decomp_multiscen_v14_by_scenario.csv').exists() else ('all_theta_multiscen_v9_by_scenario_summary.csv' if Path('all_theta_multiscen_v9_by_scenario_summary.csv').exists() else 'cdf_error_decomp_multiscen_v14_by_scenario.csv')
         diagnose_scenario_coverage_shift(XMU,XMU_eval,scenario_src,norm,save_path='scenario_generalization_diagnostics_v14.csv')
-        theta_src='cdf_error_decomp_multiscen_v14_strict_by_theta.csv' if Path('cdf_error_decomp_multiscen_v14_strict_by_theta.csv').exists() else ('all_theta_multiscen_v9_by_theta_summary.csv' if Path('all_theta_multiscen_v9_by_theta_summary.csv').exists() else 'cdf_error_decomp_multiscen_v14_strict_by_theta.csv')
-        generate_worst_theta_diagnostics('cdf_error_decomp_multiscen_v14_strict_by_pair.csv',theta_src,save_path='worst_theta_diagnostics_v14.csv')
-        plot_worst_pair_cdfs('cdf_error_decomp_multiscen_v14_strict_by_pair.csv',net,norm,XMU_eval,THETA_FEAT,THETA_LIST,YH_eval)
-        plot_worst6_flex_domains_from_pair_csv('cdf_error_decomp_multiscen_v14_strict_by_pair.csv',case,net,norm,THETA_LIST)
-        compare_v14_against_v12_v13('cdf_error_decomp_multiscen_v14_strict_by_pair.csv')
+        theta_src='cdf_error_decomp_multiscen_v14_by_theta.csv' if Path('cdf_error_decomp_multiscen_v14_by_theta.csv').exists() else ('all_theta_multiscen_v9_by_theta_summary.csv' if Path('all_theta_multiscen_v9_by_theta_summary.csv').exists() else 'cdf_error_decomp_multiscen_v14_by_theta.csv')
+        generate_worst_theta_diagnostics('cdf_error_decomp_multiscen_v14_by_pair.csv',theta_src,save_path='worst_theta_diagnostics_v14.csv')
+        plot_worst_pair_cdfs('cdf_error_decomp_multiscen_v14_by_pair.csv',net,norm,XMU_eval,THETA_FEAT,THETA_LIST,YH_eval)
+        if RUN_FLEX_DOMAIN_PLOTS:
+            plot_worst6_flex_domains_from_pair_csv('cdf_error_decomp_multiscen_v14_by_pair.csv',case,net,norm,THETA_LIST)
+        compare_v14_against_v12_v13('cdf_error_decomp_multiscen_v14_by_pair.csv')
         if Path('formal_active_pattern_records_v10.csv').exists() or FORMAL_EVAL_REBUILD_CACHE:
             print('[active-pattern-novelty] placeholder: records ready for analysis.')
         else:
             print('[active-pattern-novelty] formal active records unavailable; set FORMAL_EVAL_REBUILD_CACHE=True to generate.')
-        ext_df=pd.read_csv('cdf_error_decomp_multiscen_v14_strict_by_pair.csv')
+        ext_df=pd.read_csv('cdf_error_decomp_multiscen_v14_by_pair.csv')
         wrow=ext_df.loc[ext_df['arms_pct'].idxmax()]
         external_stats={'external_mean_arms':float(ext_df['arms_pct'].mean()),'external_max_arms':float(ext_df['arms_pct'].max()),'external_q90_arms':float(np.quantile(ext_df['arms_pct'],0.9)),'external_worst_theta':int(wrow['theta_idx']),'external_worst_scenario':int(wrow['scenario_idx'])}
         print('[formal-multiscen-v12]')
@@ -2087,7 +2062,7 @@ def main():
         print(f"worst scenario={external_stats['external_worst_scenario']}")
         print(f"worst theta={external_stats['external_worst_theta']}")
         if RUN_TRAINING:
-            finalize_v14_strict_checkpoint(net,norm,cached_stats,external_stats)
+            finalize_v14_checkpoint(net,norm,cached_stats,external_stats)
     else:
         analyze_cdf_error_decomposition(net=net,norm=norm,XMU_eval=XMU_eval,THETA_FEAT=THETA_FEAT,theta_list=THETA_LIST,YH_eval=YH_eval,atom_diag_csv_path='support_atom_eval_by_theta.csv',active_diag_csv_path='support_atom_eval_active_patterns.csv',save_prefix='cdf_error_decomp_v14')
     write_polygon_diag_csv()
