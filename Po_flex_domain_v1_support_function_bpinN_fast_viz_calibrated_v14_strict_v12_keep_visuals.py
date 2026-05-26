@@ -1049,11 +1049,12 @@ def eval_all_theta_cdf_arms_multiscenario(case,net,norm,theta_list,n_eval_scenar
                     if sol is not None: YH_eval[s,m,j]=sol['h']
         XMU_eval=np.array(XMU_eval,dtype=float); np.savez(cache_path,XMU_eval=XMU_eval,YH_eval=YH_eval)
     S,T=YH_eval.shape[0],YH_eval.shape[2]
+    theta_feat=np.stack([np.cos(theta_list),np.sin(theta_list)],axis=1).astype(np.float32)
     arms_matrix=np.full((S,T),np.nan)
     rows=[]
     for sidx in range(S):
         for j,th in enumerate(theta_list):
-            m=compute_pair_cdf_metrics_unified(net,norm,XMU_eval[sidx:sidx+1],THETA_FEAT[j:j+1],YH_eval[sidx,:,j],n_grid=300,posterior_samples=EVAL_THETA_SAMPLES,sample_mode="posterior_mean",z_margin_abs=0.2)
+            m=compute_pair_cdf_metrics_unified(net,norm,XMU_eval[sidx:sidx+1],theta_feat[j:j+1],YH_eval[sidx,:,j],n_grid=300,posterior_samples=EVAL_THETA_SAMPLES,sample_mode="posterior_mean",z_margin_abs=0.2)
             arms_matrix[sidx,j]=m['arms_pct']
             rows.append({'scenario_idx':sidx,'theta_idx':j,'theta':float(th),'arms_pct':float(m['arms_pct']),'ks_stat':float(m['ks_stat'])})
     import pandas as pd
