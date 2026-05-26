@@ -2084,28 +2084,46 @@ class BayesSingleThetaGMM2SupportNet(nn.Module):
             h = a(l(h, sample=sample))
         return h
 
-    def forward_gmm_single(self, x_mu_norm, sample=True):
-        feat = self.encode_gmm_single(x_mu_norm, sample=sample)
-        out = self.gmm_out(feat, sample=sample)
-        K = N_GMM_COMPONENTS
-        w = torch.softmax(out[:, :K], dim=1)
-        mu = out[:, K:2*K]
-        sigma = torch.nn.functional.softplus(out[:, 2*K:3*K]) + GMM_SIGMA_FLOOR
-        return feat, w, mu, sigma
+def flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx):
+    alpha=float(np.cos(THETA_LIST[theta_idx])); beta=float(np.sin(THETA_LIST[theta_idx]))
+    yh=YH[:,:,theta_idx]; yp0=YP0[:,:,theta_idx]; yq0=YQ0[:,:,theta_idx]; ypg=YPG[:,:,theta_idx,:]; yqg=YQG[:,:,theta_idx,:]
+    yt=-beta*yp0+alpha*yq0
+    xmu_flat=np.repeat(XMU, yh.shape[1], axis=0)
+    xreal_flat=XREAL.reshape(-1, XREAL.shape[-1])
+    yh_flat=yh.reshape(-1,1); yp0_flat=yp0.reshape(-1,1); yq0_flat=yq0.reshape(-1,1); yt_flat=yt.reshape(-1,1)
+    ypg_flat=ypg.reshape(-1, ypg.shape[-1]); yqg_flat=yqg.reshape(-1, yqg.shape[-1])
+    mask=np.isfinite(yh_flat[:,0]) & np.isfinite(yp0_flat[:,0]) & np.isfinite(yq0_flat[:,0]) & np.isfinite(yt_flat[:,0])
+    return dict(xmu_flat=xmu_flat[mask], xreal_flat=xreal_flat[mask], yh_flat=yh_flat[mask], yp0_flat=yp0_flat[mask], yq0_flat=yq0_flat[mask], yt_flat=yt_flat[mask], ypg_flat=ypg_flat[mask], yqg_flat=yqg_flat[mask], alpha=alpha, beta=beta, XMU_scen=XMU, YH_theta_scen=yh)
 
-    def recover_boundary_dispatch_from_h_fixed_theta(self, feat, x_real_norm, h_label, h_mean, h_std, t_mean, t_std, alpha, beta, sample=True):
-        h_norm = (h_label - h_mean) / (h_std + 1e-9)
-        rec_in = torch.cat([feat, x_real_norm, h_norm], dim=1)
-        rec_h = torch.nn.functional.silu(self.rec_hidden(rec_in, sample=sample))
-        rec = self.rec_out(rec_h, sample=sample)
-        t_hat = t_mean + t_std * rec[:, 0:1]
-        raw_pg = rec[:, 1:1+self.n_gen]
-        raw_qg = rec[:, 1+self.n_gen:1+2*self.n_gen]
-        pg_hat = self.pg_min_t + torch.sigmoid(raw_pg) * (self.pg_max_t - self.pg_min_t)
-        qg_hat = self.qg_min_t + torch.sigmoid(raw_qg) * (self.qg_max_t - self.qg_min_t)
-        p0_hat = alpha * h_label - beta * t_hat
-        q0_hat = beta * h_label + alpha * t_hat
-        return p0_hat, q0_hat, pg_hat, qg_hat, t_hat
+class BayesSingleThetaGMM2SupportNet(nn.Module):
+    def __init__(self, in_dim, case):
+        super().__init__()
+        self.case = case
+        self.in_dim = in_dim
+        self.gen_buses = case.gen_buses
+        self.pg_min_t=torch.tensor(case.pg_min,dtype=torch.float32,device=DEVICE).view(1,-1)
+        self.pg_max_t=torch.tensor(case.pg_max,dtype=torch.float32,device=DEVICE).view(1,-1)
+        self.qg_absmax_t=torch.tensor(np.maximum(np.abs(case.qg_min),np.abs(case.qg_max)),dtype=torch.float32,device=DEVICE).view(1,-1)
+        self.backbone = nn.Sequential(BayesLinear(in_dim, HIDDEN_DIM), nn.SiLU(), nn.Dropout(0.05), BayesLinear(HIDDEN_DIM, HIDDEN_DIM), nn.SiLU())
+        self.gmm_head = BayesLinear(HIDDEN_DIM, N_GMM_COMPONENTS*3)
+        self.rec_head = nn.Sequential(BayesLinear(HIDDEN_DIM + in_dim + 1, HIDDEN_DIM), nn.SiLU(), BayesLinear(HIDDEN_DIM, 1+2*len(case.gen_buses)))
+    def kl_loss(self):
+        k=torch.tensor(0.0,device=DEVICE)
+        for m in self.modules():
+            if hasattr(m,'kl_loss'): k=k+m.kl_loss()
+        return k
+    def forward_gmm_single(self, xmu, sample=True):
+        h = self.backbone(xmu); out=self.gmm_head(h, sample=sample); K=N_GMM_COMPONENTS
+        lw,mu,ls=out[:,:K],out[:,K:2*K],out[:,2*K:3*K]
+        w=torch.softmax(lw,dim=1); s=torch.nn.functional.softplus(ls)+GMM_SIGMA_FLOOR
+        return h,w,mu,s
+    def recover_boundary_dispatch_from_h_fixed_theta(self,henc,xr,h_label,hm,hs,tm,ts,alpha,beta,sample=True,bound_t_output=True):
+        hn=(h_label-hm)/(hs+1e-9); o=self.rec_head(torch.cat([henc,xr,hn],dim=1)); t_n=o[:,0:1];
+        if bound_t_output: t_n=torch.tanh(t_n)
+        t=tm+ts*t_n; ng=len(self.gen_buses); pg_n=o[:,1:1+ng]; qg_n=o[:,1+ng:1+2*ng]
+        pg=self.pg_min_t + (self.pg_max_t-self.pg_min_t)*torch.sigmoid(pg_n); qg=qg_n*(self.qg_absmax_t+1e-6)
+        p0=alpha*h_label-beta*t; q0=beta*h_label+alpha*t
+        return p0,q0,pg,qg,t
 
     def kl_divergence(self):
         return sum(layer.kl_divergence() for layer in self.layers) + self.gmm_out.kl_divergence() + self.rec_hidden.kl_divergence() + self.rec_out.kl_divergence()
