@@ -184,10 +184,10 @@ LOAD_TRAINED_MODEL = False
 LOAD_MODEL_PATH = "training_results/expB_v7_extendedCD_best_seed0_model.pt"
 LOAD_NORM_PATH = "training_results/expB_v7_extendedCD_best_seed0_norm.pkl"
 LOAD_CONFIG_PATH = "training_results/expB_v7_extendedCD_best_seed0_config.json"
-TRAINING_RUN_TAG = "v14_strict_v12_keep_visuals"
+TRAINING_RUN_TAG = "v14_strict_v12_strategy_visual_rename"
 RUN_FULL_OPF_EVAL = False
 RUN_FLEX_DOMAIN_PLOTS = True
-MULTI_SCENARIO_FORMAL_EVAL = True
+MULTI_SCENARIO_FORMAL_EVAL = False  # only used when RUN_FULL_OPF_EVAL=True
 N_FORMAL_EVAL_SCENARIOS = 10
 MC_EVAL_PER_SCENARIO = 100
 FORMAL_EVAL_REBUILD_CACHE = False
@@ -1049,11 +1049,12 @@ def eval_all_theta_cdf_arms_multiscenario(case,net,norm,theta_list,n_eval_scenar
                     if sol is not None: YH_eval[s,m,j]=sol['h']
         XMU_eval=np.array(XMU_eval,dtype=float); np.savez(cache_path,XMU_eval=XMU_eval,YH_eval=YH_eval)
     S,T=YH_eval.shape[0],YH_eval.shape[2]
+    theta_feat=np.stack([np.cos(theta_list),np.sin(theta_list)],axis=1).astype(np.float32)
     arms_matrix=np.full((S,T),np.nan)
     rows=[]
     for sidx in range(S):
         for j,th in enumerate(theta_list):
-            m=compute_pair_cdf_metrics_unified(net,norm,XMU_eval[sidx:sidx+1],THETA_FEAT[j:j+1],YH_eval[sidx,:,j],n_grid=300,posterior_samples=EVAL_THETA_SAMPLES,sample_mode="posterior_mean",z_margin_abs=0.2)
+            m=compute_pair_cdf_metrics_unified(net,norm,XMU_eval[sidx:sidx+1],theta_feat[j:j+1],YH_eval[sidx,:,j],n_grid=300,posterior_samples=EVAL_THETA_SAMPLES,sample_mode="posterior_mean",z_margin_abs=0.2)
             arms_matrix[sidx,j]=m['arms_pct']
             rows.append({'scenario_idx':sidx,'theta_idx':j,'theta':float(th),'arms_pct':float(m['arms_pct']),'ks_stat':float(m['ks_stat'])})
     import pandas as pd
@@ -1688,6 +1689,7 @@ def analyze_cdf_error_decomposition_multiscenario(net,norm,XMU_eval,THETA_FEAT,t
     return df,by_theta,by_sc,summ
 
 def diagnose_scenario_coverage_shift(XMU_train,XMU_eval,scenario_summary_csv,norm,save_path='scenario_generalization_diagnostics_v14.csv'):
+    # Deprecated: formal external multiscenario diagnostics; not used in default v14 main flow.
     import pandas as pd
     tr=(XMU_train-norm['x_mu_mean'])/norm['x_mu_std']; ev=(XMU_eval-norm['x_mu_mean'])/norm['x_mu_std']
     d=np.linalg.norm(ev[:,None,:]-tr[None,:,:],axis=2)
@@ -1709,6 +1711,7 @@ def diagnose_scenario_coverage_shift(XMU_train,XMU_eval,scenario_summary_csv,nor
     print('[scenario-coverage]'); print(f"corr(mean_arms, nearest_train_dist)={_safe_corr(out.mean_arms,out.nearest_train_dist):.4f}"); print(f"corr(max_arms, nearest_train_dist)={_safe_corr(out.max_arms,out.nearest_train_dist):.4f}"); print(f"corr(mean_arms, center_dist)={_safe_corr(out.mean_arms,out.center_dist):.4f}"); print(f"corr(max_arms, center_dist)={_safe_corr(out.max_arms,out.center_dist):.4f}")
 
 def generate_worst_theta_diagnostics(pair_csv,theta_csv,save_path='worst_theta_diagnostics_v14.csv'):
+    # Deprecated: formal external multiscenario diagnostics; not used in default v14 main flow.
     import pandas as pd
     df=pd.read_csv(pair_csv); th=pd.read_csv(theta_csv)
     dom=df.groupby('theta_idx')['primary_error_type'].agg(lambda x:x.value_counts().index[0]).reset_index(name='dominant_error_type')
@@ -1727,6 +1730,7 @@ def generate_worst_theta_diagnostics(pair_csv,theta_csv,save_path='worst_theta_d
     print('[worst-theta-diagnostics]')
 
 def plot_worst_pair_cdfs(pair_csv,net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eval,save_prefix="all_theta_multiscen_v14"):
+    # Deprecated: formal external multiscenario visualization; not used in default v14 main flow.
 
     import pandas as pd
     hm=float(norm['h_mean'][0,0]); hs=float(norm['h_std'][0,0])
@@ -1749,6 +1753,7 @@ def plot_worst_pair_cdfs(pair_csv,net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eva
     plt.tight_layout(); plt.savefig(f'{save_prefix}_worst6_cdf_grid.png',dpi=260)
 
 def plot_worst6_flex_domains_from_pair_csv(pair_csv,case,net,norm,theta_list):
+    # Deprecated: formal external multiscenario visualization; not used in default v14 main flow.
     if (not Path(pair_csv).exists()) or (not Path(FORMAL_EVAL_CACHE_PATH).exists()):
         print("[warning] skip FlexDomain_worst6_pairs_v14_strict.png (missing pair csv or formal cache).")
         return
@@ -1800,6 +1805,7 @@ def check_multiscen_decomp_consistency(decomp_pair_csv="cdf_error_decomp_multisc
 
 
 def compare_v14_against_v12_v13(v14_pair_csv='cdf_error_decomp_multiscen_v14_by_pair.csv'):
+    # Deprecated: external comparison utility; not used in default v14 main flow.
     if (not Path(v14_pair_csv).exists()) or (not Path('cdf_error_decomp_multiscen_v12_by_pair.csv').exists()) or (not Path('cdf_error_decomp_multiscen_v13_by_pair.csv').exists()):
         print('[v14-compare] skipped (missing csv).'); return
     v12=pd.read_csv('cdf_error_decomp_multiscen_v12_by_pair.csv')
@@ -1850,17 +1856,17 @@ def finalize_v14_checkpoint(net,norm,cached_stats,external_stats):
     with open(config_path,'w',encoding='utf-8') as f: json.dump(cfg,f,ensure_ascii=False,indent=2)
     selection_score=float(external_stats['external_mean_arms']+0.30*external_stats['external_q90_arms']+0.20*cached_stats['cached_val_mean_arms'])
     metrics={**cfg,**cached_stats,**external_stats,'selection_score':selection_score,'model_path':model_path,'norm_path':norm_path,'config_path':config_path}
-    with open(f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_metrics.json",'w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
-    best_metrics_path=Path(TRAINING_RESULT_DIR)/'v14_rollback_v12_strategy_keep_visuals_best_metrics.json'
+    with open(f"{TRAINING_RESULT_DIR}/v14_strict_v12_strategy_visual_rename_metrics.json",'w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
+    best_metrics_path=Path(TRAINING_RESULT_DIR)/'v14_strict_v12_strategy_visual_rename_best_metrics.json'
     best_score=float('inf')
     if best_metrics_path.exists():
         try: best_score=float(json.loads(best_metrics_path.read_text(encoding='utf-8')).get('selection_score',float('inf')))
         except Exception: best_score=float('inf')
     update_best=(selection_score<best_score)
     if update_best:
-        shutil.copy2(model_path,f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_best_model.pt")
-        shutil.copy2(norm_path,f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_best_norm.pkl")
-        shutil.copy2(config_path,f"{TRAINING_RESULT_DIR}/v14_rollback_v12_strategy_keep_visuals_best_config.json")
+        shutil.copy2(model_path,f"{TRAINING_RESULT_DIR}/v14_strict_v12_strategy_visual_rename_best_model.pt")
+        shutil.copy2(norm_path,f"{TRAINING_RESULT_DIR}/v14_strict_v12_strategy_visual_rename_best_norm.pkl")
+        shutil.copy2(config_path,f"{TRAINING_RESULT_DIR}/v14_strict_v12_strategy_visual_rename_best_config.json")
         with open(best_metrics_path,'w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
     print('[v14-checkpoint]')
     print(f"cached_val_mean={cached_stats['cached_val_mean_arms']:.4f}")
@@ -1877,14 +1883,13 @@ def write_visualization_manifest_v14_strict():
 ['cached_val_cdf_arms_v14.csv','cached validation','eval_cached_validation_cdf_arms','每个theta验证ARMS表','after training','v14'],
 ['cached_val_cdf_arms_v14_bar.png','cached validation','eval_cached_validation_cdf_arms','每个theta验证ARMS柱状图','after training','v14'],
 ['FlexDomain_CDF_selected_directions_v14.png','flexdomain','eval_and_plot_flex_domain','方向CDF对比','if enabled','v14'],
-['FlexDomain_overlay_quantile_comparison_v14.png','flexdomain','eval_and_plot_flex_domain','分位域叠加对比','if enabled','v14'],
+['FlexDomain_MC_quantile_domains_v14.png','flexdomain','eval_and_plot_flex_domain','MC分位域可视化','if enabled','v14'],
 ['FlexDomain_MC_quantile_domains_v14.png','flexdomain','eval_and_plot_flex_domain','MC分位域','if enabled','v14'],
 ['FlexDomain_BPINN_quantile_domains_v14.png','flexdomain','eval_and_plot_flex_domain','BPINN分位域','if enabled','v14'],
 ['FlexDomain_all_theta_ARMS_bar_v14.png','flexdomain','eval_all_theta_cdf_arms_multiscenario','全theta ARMS柱状图','after formal eval','v14'],
 ['FlexDomain_probability_overlay_v14_strict.png','flexibility domain','eval_and_plot_flex_domain_posterior','概率灵活域叠加','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
 ['FlexDomain_realization_cloud_v14_strict.png','flexibility domain','eval_and_plot_realization_cloud','灵活域实现云图','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
 ['FlexDomain_single_scenario_MC_vs_BPINN_v14_strict.png','flexibility domain','eval_and_plot_flex_domain','单场景真实/预测灵活域对比','if RUN_FLEX_DOMAIN_PLOTS','v14_strict'],
-['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整灵活域对比','if pair csv exists','v14_strict'],
 ['support_atom_mass_by_theta_v14.png','atom diagnostic','diagnose_support_distribution_atoms','atom质量','always','v14'],
 ['support_scene_atom_ratio_by_theta_v14.png','atom diagnostic','diagnose_support_distribution_atoms','场景atom比例','always','v14'],
 ['support_distribution_histograms_worst_theta_v14.png','atom diagnostic','diagnose_support_distribution_atoms','最差theta分布直方图','always','v14'],
@@ -1895,15 +1900,10 @@ def write_visualization_manifest_v14_strict():
 ['cdf_residual_worst_theta_v14.png','cdf decomp','analyze_cdf_error_decomposition','最差theta残差','after decomp','v14'],
 ['cdf_atom_vs_error_scatter_v14.png','cdf decomp','analyze_cdf_error_decomposition','atom vs error','after decomp','v14'],
 ['cdf_bias_vs_uncertainty_scatter_v14.png','cdf decomp','analyze_cdf_error_decomposition','bias vs uncertainty','after decomp','v14'],
-['all_theta_multiscen_v14_worst_pair_cdf.png','worst pair CDF','plot_worst_pair_cdfs','最差pair CDF','after formal cache eval','v14'],
-['all_theta_multiscen_v14_worst6_cdf_grid.png','worst pair CDF','plot_worst_pair_cdfs','最差6个CDF','after formal cache eval','v14'],
 ['cdf_error_decomp_multiscen_v14_by_pair.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','pair级误差表','after formal cache eval','v14'],
 ['cdf_error_decomp_multiscen_v14_by_theta.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','theta汇总','after formal cache eval','v14'],
 ['cdf_error_decomp_multiscen_v14_by_scenario.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','scenario汇总','after formal cache eval','v14'],
 ['cdf_error_decomp_multiscen_v14_summary.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','总体汇总','after formal cache eval','v14'],
-['worst_theta_diagnostics_v14.csv','diagnostic','generate_worst_theta_diagnostics','worst theta诊断','after formal cache eval','v14'],
-['scenario_generalization_diagnostics_v14.csv','diagnostic','diagnose_scenario_coverage_shift','场景覆盖诊断','after formal cache eval','v14'],
-['v14_strict_vs_v12_v13_multiscen_comparison.csv','comparison','compare_v14_against_v12_v13','v14_strict对比v12/v13外部多场景对比','after formal cache eval','v14_strict']
 ]
     import csv
     with open('visualization_manifest_v14_strict.csv','w',newline='',encoding='utf-8') as f:
@@ -1947,7 +1947,7 @@ def main():
             print(f"[eval-only-cached-val] mean={np.nanmean(vals):.4f} median={np.nanmedian(vals):.4f} max={np.nanmax(vals):.4f} worst3={np.argsort(-vals)[:3].tolist()}")
             Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True)
             metrics={'cached_val_mean_arms':float(np.nanmean(vals)),'cached_val_max_arms':float(np.nanmax(vals)),'worst3':np.argsort(-vals)[:3].tolist(),'timestamp':datetime.now().isoformat(),'model_path':LOAD_MODEL_PATH if not RUN_TRAINING else 'trained_in_run'}
-            with open('training_results/v14_rollback_v12_strategy_keep_visuals_metrics.json','w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
+            with open('training_results/v14_strict_v12_strategy_visual_rename_metrics.json','w',encoding='utf-8') as f: json.dump(metrics,f,ensure_ascii=False,indent=2)
             if np.nanmean(vals)>15 or np.nanmax(vals)>25:
                 print("[eval-only-warning] loaded model cached validation ARMS is high; formal multiscen evaluation may be poor.")
     if RUN_SANITY_CHECKS: flex_realization_sanity_check(case,net,norm,THETA_LIST)
@@ -1972,10 +1972,7 @@ def main():
     cached_stats={'cached_val_mean_arms':float(np.nanmean(cv_vals)),'cached_val_max_arms':float(np.nanmax(cv_vals)),'cached_val_worst3':np.argsort(-cv_vals)[:3].tolist()}
     print(f"[cached-val-v14] mean={cached_stats['cached_val_mean_arms']:.4f} median={float(np.nanmedian(cv_vals)):.4f} max={cached_stats['cached_val_max_arms']:.4f} worst3={cached_stats['cached_val_worst3']}")
     print('\n=== CDF error decomposition diagnostic ===')
-    if MULTI_SCENARIO_FORMAL_EVAL and Path(FORMAL_EVAL_CACHE_PATH).exists():
-        d=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True)
-        XMU_eval=d['XMU_eval']; YH_eval=d['YH_eval']
-    elif Path('all_theta_eval_cache.npz').exists():
+    if Path('all_theta_eval_cache.npz').exists():
         if not RUN_FULL_OPF_EVAL:
             print("[cdf-error-decomp] using existing all_theta_eval_cache.npz; it may come from a previous evaluation run.")
         d=np.load('all_theta_eval_cache.npz',allow_pickle=True)
@@ -1999,35 +1996,7 @@ def main():
     else:
         print('[cdf-error-decomp] warning: eval cache unavailable, fallback to training YH.')
         XMU_eval=XMU; YH_eval=YH
-    if MULTI_SCENARIO_FORMAL_EVAL and Path(FORMAL_EVAL_CACHE_PATH).exists():
-        d=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True); XMU_eval=d['XMU_eval']; YH_eval=d['YH_eval']
-        pair_df,_,_,_=analyze_cdf_error_decomposition_multiscenario(net,norm,XMU_eval,THETA_FEAT,THETA_LIST,YH_eval,save_prefix='cdf_error_decomp_multiscen_v14',cdf_grid_size=300,n_posterior_samples=EVAL_THETA_SAMPLES)
-        scenario_src='cdf_error_decomp_multiscen_v14_by_scenario.csv' if Path('cdf_error_decomp_multiscen_v14_by_scenario.csv').exists() else ('all_theta_multiscen_v9_by_scenario_summary.csv' if Path('all_theta_multiscen_v9_by_scenario_summary.csv').exists() else 'cdf_error_decomp_multiscen_v14_by_scenario.csv')
-        diagnose_scenario_coverage_shift(XMU,XMU_eval,scenario_src,norm,save_path='scenario_generalization_diagnostics_v14.csv')
-        theta_src='cdf_error_decomp_multiscen_v14_by_theta.csv' if Path('cdf_error_decomp_multiscen_v14_by_theta.csv').exists() else ('all_theta_multiscen_v9_by_theta_summary.csv' if Path('all_theta_multiscen_v9_by_theta_summary.csv').exists() else 'cdf_error_decomp_multiscen_v14_by_theta.csv')
-        generate_worst_theta_diagnostics('cdf_error_decomp_multiscen_v14_by_pair.csv',theta_src,save_path='worst_theta_diagnostics_v14.csv')
-        plot_worst_pair_cdfs('cdf_error_decomp_multiscen_v14_by_pair.csv',net,norm,XMU_eval,THETA_FEAT,THETA_LIST,YH_eval)
-        if RUN_FLEX_DOMAIN_PLOTS:
-            plot_worst6_flex_domains_from_pair_csv('cdf_error_decomp_multiscen_v14_by_pair.csv',case,net,norm,THETA_LIST)
-        compare_v14_against_v12_v13('cdf_error_decomp_multiscen_v14_by_pair.csv')
-        if Path('formal_active_pattern_records_v10.csv').exists() or FORMAL_EVAL_REBUILD_CACHE:
-            print('[active-pattern-novelty] placeholder: records ready for analysis.')
-        else:
-            print('[active-pattern-novelty] formal active records unavailable; set FORMAL_EVAL_REBUILD_CACHE=True to generate.')
-        ext_df=pd.read_csv('cdf_error_decomp_multiscen_v14_by_pair.csv')
-        wrow=ext_df.loc[ext_df['arms_pct'].idxmax()]
-        external_stats={'external_mean_arms':float(ext_df['arms_pct'].mean()),'external_max_arms':float(ext_df['arms_pct'].max()),'external_q90_arms':float(np.quantile(ext_df['arms_pct'],0.9)),'external_worst_theta':int(wrow['theta_idx']),'external_worst_scenario':int(wrow['scenario_idx'])}
-        print('[formal-multiscen-v12]')
-        print(f"overall mean={external_stats['external_mean_arms']:.4f}")
-        print(f"overall median={float(np.median(ext_df['arms_pct'])):.4f}")
-        print(f"overall max={external_stats['external_max_arms']:.4f}")
-        print(f"overall q90={external_stats['external_q90_arms']:.4f}")
-        print(f"worst scenario={external_stats['external_worst_scenario']}")
-        print(f"worst theta={external_stats['external_worst_theta']}")
-        if RUN_TRAINING:
-            finalize_v14_checkpoint(net,norm,cached_stats,external_stats)
-    else:
-        analyze_cdf_error_decomposition(net=net,norm=norm,XMU_eval=XMU_eval,THETA_FEAT=THETA_FEAT,theta_list=THETA_LIST,YH_eval=YH_eval,atom_diag_csv_path='support_atom_eval_by_theta.csv',active_diag_csv_path='support_atom_eval_active_patterns.csv',save_prefix='cdf_error_decomp_v14')
+    analyze_cdf_error_decomposition(net=net,norm=norm,XMU_eval=XMU_eval,THETA_FEAT=THETA_FEAT,theta_list=THETA_LIST,YH_eval=YH_eval,atom_diag_csv_path='support_atom_eval_by_theta.csv',active_diag_csv_path='support_atom_eval_active_patterns.csv',save_prefix='cdf_error_decomp_v14')
     write_polygon_diag_csv()
     write_visualization_manifest_v14_strict()
     if RUN_MULTI_TEST: eval_multiple_flex_scenarios(case,net,norm,THETA_LIST)
