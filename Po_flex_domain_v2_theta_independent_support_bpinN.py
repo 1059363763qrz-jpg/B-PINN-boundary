@@ -187,9 +187,9 @@ LOAD_CONFIG_PATH = "training_results/expB_v7_extendedCD_best_seed0_config.json"
 TRAINING_RUN_TAG = "v15_theta_independent_support_models"
 RUN_FULL_OPF_EVAL = False
 RUN_FLEX_DOMAIN_PLOTS = True
-THETA_TRAIN_MODE = "all"
+THETA_TRAIN_MODE = "subset"
 TRAIN_THETA_LIST = list(range(N_THETA))
-DEBUG_THETA_LIST = [2, 7, 8]
+DEBUG_THETA_LIST = [2]
 MULTI_SCENARIO_FORMAL_EVAL = True
 N_FORMAL_EVAL_SCENARIOS = 10
 MC_EVAL_PER_SCENARIO = 100
@@ -2049,12 +2049,23 @@ def flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx):
     mask=np.isfinite(yh_flat[:,0]) & np.isfinite(yp0_flat[:,0]) & np.isfinite(yq0_flat[:,0]) & np.isfinite(yt_flat[:,0])
     return dict(xmu_flat=xmu_flat[mask], xreal_flat=xreal_flat[mask], yh_flat=yh_flat[mask], yp0_flat=yp0_flat[mask], yq0_flat=yq0_flat[mask], yt_flat=yt_flat[mask], ypg_flat=ypg_flat[mask], yqg_flat=yqg_flat[mask], alpha=alpha, beta=beta, XMU_scen=XMU, YH_theta_scen=yh)
 
-class BayesSingleThetaGMM2SupportNet(BayesFlexGMM2SupportNet):
+class BayesSingleThetaGMM2SupportNet(nn.Module):
     def __init__(self, in_dim, case):
-        super().__init__(in_dim, case)
+        super().__init__()
+        self.case = case
+        self.in_dim = in_dim
+        self.gen_buses = case.gen_buses
+        self.pg_min_t=torch.tensor(case.pg_min,dtype=torch.float32,device=DEVICE).view(1,-1)
+        self.pg_max_t=torch.tensor(case.pg_max,dtype=torch.float32,device=DEVICE).view(1,-1)
+        self.qg_absmax_t=torch.tensor(np.maximum(np.abs(case.qg_min),np.abs(case.qg_max)),dtype=torch.float32,device=DEVICE).view(1,-1)
         self.backbone = nn.Sequential(BayesLinear(in_dim, HIDDEN_DIM), nn.SiLU(), nn.Dropout(0.05), BayesLinear(HIDDEN_DIM, HIDDEN_DIM), nn.SiLU())
         self.gmm_head = BayesLinear(HIDDEN_DIM, N_GMM_COMPONENTS*3)
         self.rec_head = nn.Sequential(BayesLinear(HIDDEN_DIM + in_dim + 1, HIDDEN_DIM), nn.SiLU(), BayesLinear(HIDDEN_DIM, 1+2*len(case.gen_buses)))
+    def kl_loss(self):
+        k=torch.tensor(0.0,device=DEVICE)
+        for m in self.modules():
+            if hasattr(m,'kl_loss'): k=k+m.kl_loss()
+        return k
     def forward_gmm_single(self, xmu, sample=True):
         h = self.backbone(xmu); out=self.gmm_head(h, sample=sample); K=N_GMM_COMPONENTS
         lw,mu,ls=out[:,:K],out[:,K:2*K],out[:,2*K:3*K]
