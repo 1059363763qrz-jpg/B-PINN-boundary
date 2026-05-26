@@ -947,8 +947,10 @@ def eval_and_plot_flex_domain(case,net,norm,theta_list,mc_eval=500,seed=SEED_EVA
     if len(poly_bn50)>2: x,y=close(poly_bn50); plt.plot(x,y,'--',color='#c2410c',lw=3.0,label='B-PINN median domain')
     if len(poly_mc50)>2 and len(poly_bn50)>2 and len(poly_mc50)==len(poly_bn50):
         d=np.sqrt(((poly_mc50-poly_bn50)**2).sum(1))
-        print(f"[flex-domain-metrics] median mean vertex dist = {d.mean():.4f} MW/Mvar")
-        print(f"[flex-domain-metrics] median max vertex dist = {d.max():.4f}")
+        print(f"[flex-domain-metrics] approximate vertex distance mean = {d.mean():.4f} MW/Mvar")
+        print(f"[flex-domain-metrics] approximate vertex distance max = {d.max():.4f}")
+    elif len(poly_mc50)>2 and len(poly_bn50)>2:
+        print("[flex-domain-metrics] approximate vertex distance skipped (polygon vertex count mismatch).")
     def area_err(a,b): return abs(a-b)/(abs(a)+1e-9)*100.0
     amc50,abp50,amc05,abp05,amc95,abp95=polygon_area(poly_mc50),polygon_area(poly_bn50),polygon_area(poly_mc05),polygon_area(poly_bn05),polygon_area(poly_mc95),polygon_area(poly_bn95)
     print(f"[flex-domain-metrics] median area err = {area_err(amc50,abp50):.3f} %")
@@ -1755,17 +1757,23 @@ def plot_worst_pair_cdfs(pair_csv,net,norm,XMU_eval,THETA_FEAT,theta_list,YH_eva
 def plot_worst6_flex_domains_from_pair_csv(pair_csv,case,net,norm,theta_list):
     # Deprecated: formal external multiscenario visualization; not used in default v14 main flow.
     if (not Path(pair_csv).exists()) or (not Path(FORMAL_EVAL_CACHE_PATH).exists()):
-        print("[warning] skip FlexDomain_worst6_pairs_v14_strict.png (missing pair csv or formal cache).")
+        print("[v14-worst6-flex] warning: formal eval cache unavailable; skip worst6 flex-domain plot.")
         return
     df=pd.read_csv(pair_csv).sort_values('arms_pct',ascending=False).head(6)
     if len(df)==0: return
-    XMU_eval=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True)['XMU_eval']
+    cache=np.load(FORMAL_EVAL_CACHE_PATH,allow_pickle=True)
+    if ('XMU_eval' not in cache) or ('YH_eval' not in cache):
+        print("[v14-worst6-flex] warning: formal eval cache unavailable; skip worst6 flex-domain plot.")
+        return
+    XMU_eval=cache['XMU_eval']; YH_eval=cache['YH_eval']
     fig,axs=plt.subplots(2,3,figsize=(14,8),dpi=220)
     for ax,(_,r) in zip(axs.ravel(),df.iterrows()):
         sidx=int(r['scenario_idx']); tidx=int(r['theta_idx']); arms=float(r['arms_pct']); xmu=XMU_eval[sidx]
         hs_mc=[]; hs_bp=[]
         for th in theta_list:
-            hs_mc.append(support_point_mc_from_xmu(case,xmu,float(th),mc_eval=80,seed=SEED_EVAL+sidx))
+            j=int(np.argmin(np.abs(np.asarray(theta_list)-th)))
+            ys=np.asarray(YH_eval[sidx,:,j],dtype=float); ys=ys[np.isfinite(ys)]
+            hs_mc.append(float(np.quantile(ys,0.5)) if len(ys)>0 else np.nan)
             xt=torch.tensor((xmu.reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std'],dtype=torch.float32,device=DEVICE)
             th_t=torch.tensor([[np.cos(th),np.sin(th)]],dtype=torch.float32,device=DEVICE)
             with torch.no_grad():
@@ -1905,6 +1913,8 @@ def write_visualization_manifest_v14_strict():
 ['cdf_error_decomp_multiscen_v14_by_scenario.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','scenario汇总','after formal cache eval','v14'],
 ['cdf_error_decomp_multiscen_v14_summary.csv','cdf decomp','analyze_cdf_error_decomposition_multiscenario','总体汇总','after formal cache eval','v14'],
 ]
+    if Path('FlexDomain_worst6_pairs_v14_strict.png').exists():
+        rows.append(['FlexDomain_worst6_pairs_v14_strict.png','flexibility domain','plot_worst6_flex_domains_from_pair_csv','worst6场景完整灵活域对比','if pair csv exists','v14_strict'])
     import csv
     with open('visualization_manifest_v14_strict.csv','w',newline='',encoding='utf-8') as f:
         w=csv.writer(f); w.writerow(['filename','category','function_name','purpose','generated_when','version_status']); w.writerows(rows)
