@@ -184,12 +184,13 @@ LOAD_TRAINED_MODEL = False
 LOAD_MODEL_PATH = "training_results/expB_v7_extendedCD_best_seed0_model.pt"
 LOAD_NORM_PATH = "training_results/expB_v7_extendedCD_best_seed0_norm.pkl"
 LOAD_CONFIG_PATH = "training_results/expB_v7_extendedCD_best_seed0_config.json"
-TRAINING_RUN_TAG = "v15_theta_independent_support_models"
+TRAINING_RUN_TAG = "v15_theta_independent_v8_style"
 RUN_FULL_OPF_EVAL = False
-RUN_FLEX_DOMAIN_PLOTS = True
+RUN_FLEX_DOMAIN_PLOTS = False
 THETA_TRAIN_MODE = "subset"
 TRAIN_THETA_LIST = list(range(N_THETA))
 DEBUG_THETA_LIST = [2]
+RUN_COMBINE_THETA_FLEX_DOMAIN = False
 MULTI_SCENARIO_FORMAL_EVAL = True
 N_FORMAL_EVAL_SCENARIOS = 10
 MC_EVAL_PER_SCENARIO = 100
@@ -2055,24 +2056,20 @@ def flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, 
     yqg = YQG[:, :, theta_idx, :]
     yt = -beta * yp0 + alpha * yq0
     n_scen, mc = yh.shape
-    xmu_flat = np.repeat(XMU, mc, axis=0)
-    xreal_flat = XREAL.reshape(n_scen * mc, -1)
-    return dict(xmu_flat=xmu_flat, xreal_flat=xreal_flat, yh_flat=yh.reshape(-1,1), yp0_flat=yp0.reshape(-1,1), yq0_flat=yq0.reshape(-1,1), yt_flat=yt.reshape(-1,1), ypg_flat=ypg.reshape(n_scen*mc,-1), yqg_flat=yqg.reshape(n_scen*mc,-1), XMU_scen=XMU, YH_theta_scen=yh, alpha=alpha, beta=beta, theta_idx=theta_idx, theta=theta)
+    return dict(xmu_flat=np.repeat(XMU, mc, axis=0), xreal_flat=XREAL.reshape(n_scen*mc, -1), yh_flat=yh.reshape(-1,1), yp0_flat=yp0.reshape(-1,1), yq0_flat=yq0.reshape(-1,1), yt_flat=yt.reshape(-1,1), ypg_flat=ypg.reshape(n_scen*mc, -1), yqg_flat=yqg.reshape(n_scen*mc, -1), XMU_scen=XMU, YH_theta_scen=yh, alpha=alpha, beta=beta, theta_idx=theta_idx, theta=theta)
 
 class BayesSingleThetaGMM2SupportNet(nn.Module):
-    def __init__(self, in_dim, case, hidden=160, depth=3):
+    def __init__(self, in_dim, case, hidden=160, depth=3, prior_sigma=1.0, init_rho=-5.0):
         super().__init__()
         self.n_gen = len(case.gen_buses)
         self.layers = nn.ModuleList()
-        self.acts = nn.ModuleList()
         d = in_dim
         for _ in range(depth):
-            self.layers.append(BayesLinear(d, hidden))
-            self.acts.append(nn.SiLU())
+            self.layers.append(BayesLinear(d, hidden, prior_sigma=prior_sigma, init_rho=init_rho))
             d = hidden
-        self.gmm_out = BayesLinear(hidden, N_GMM_COMPONENTS * 3)
-        self.rec_hidden = BayesLinear(hidden + in_dim + 1, hidden)
-        self.rec_out = BayesLinear(hidden, 1 + 2 * self.n_gen)
+        self.gmm_out = BayesLinear(hidden, 3 * N_GMM_COMPONENTS, prior_sigma=prior_sigma, init_rho=init_rho)
+        self.rec_out = BayesLinear(hidden + in_dim + 1, 1 + 2*self.n_gen, prior_sigma=prior_sigma, init_rho=init_rho)
+        self.act = nn.ReLU()
         self.register_buffer('pg_min_t', torch.tensor(case.pg_min, dtype=torch.float32).view(1,-1))
         self.register_buffer('pg_max_t', torch.tensor(case.pg_max, dtype=torch.float32).view(1,-1))
         self.register_buffer('qg_min_t', torch.tensor(case.qg_min, dtype=torch.float32).view(1,-1))
@@ -2080,145 +2077,122 @@ class BayesSingleThetaGMM2SupportNet(nn.Module):
 
     def encode_gmm_single(self, x_mu_norm, sample=True):
         h = x_mu_norm
-        for l, a in zip(self.layers, self.acts):
-            h = a(l(h, sample=sample))
+        for layer in self.layers:
+            h = self.act(layer(h, sample=sample))
         return h
 
-def flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx):
-    alpha=float(np.cos(THETA_LIST[theta_idx])); beta=float(np.sin(THETA_LIST[theta_idx]))
-    yh=YH[:,:,theta_idx]; yp0=YP0[:,:,theta_idx]; yq0=YQ0[:,:,theta_idx]; ypg=YPG[:,:,theta_idx,:]; yqg=YQG[:,:,theta_idx,:]
-    yt=-beta*yp0+alpha*yq0
-    xmu_flat=np.repeat(XMU, yh.shape[1], axis=0)
-    xreal_flat=XREAL.reshape(-1, XREAL.shape[-1])
-    yh_flat=yh.reshape(-1,1); yp0_flat=yp0.reshape(-1,1); yq0_flat=yq0.reshape(-1,1); yt_flat=yt.reshape(-1,1)
-    ypg_flat=ypg.reshape(-1, ypg.shape[-1]); yqg_flat=yqg.reshape(-1, yqg.shape[-1])
-    mask=np.isfinite(yh_flat[:,0]) & np.isfinite(yp0_flat[:,0]) & np.isfinite(yq0_flat[:,0]) & np.isfinite(yt_flat[:,0])
-    return dict(xmu_flat=xmu_flat[mask], xreal_flat=xreal_flat[mask], yh_flat=yh_flat[mask], yp0_flat=yp0_flat[mask], yq0_flat=yq0_flat[mask], yt_flat=yt_flat[mask], ypg_flat=ypg_flat[mask], yqg_flat=yqg_flat[mask], alpha=alpha, beta=beta, XMU_scen=XMU, YH_theta_scen=yh)
+    def forward_gmm_single(self, x_mu_norm, sample=True):
+        h = self.encode_gmm_single(x_mu_norm, sample=sample)
+        out = self.gmm_out(h, sample=sample)
+        K = N_GMM_COMPONENTS
+        w = torch.softmax(out[:, :K], dim=1)
+        mu = out[:, K:2*K]
+        sigma = torch.nn.functional.softplus(out[:, 2*K:3*K]) + GMM_SIGMA_FLOOR
+        return h, w, mu, sigma
 
-class BayesSingleThetaGMM2SupportNet(nn.Module):
-    def __init__(self, in_dim, case):
-        super().__init__()
-        self.case = case
-        self.in_dim = in_dim
-        self.gen_buses = case.gen_buses
-        self.pg_min_t=torch.tensor(case.pg_min,dtype=torch.float32,device=DEVICE).view(1,-1)
-        self.pg_max_t=torch.tensor(case.pg_max,dtype=torch.float32,device=DEVICE).view(1,-1)
-        self.qg_absmax_t=torch.tensor(np.maximum(np.abs(case.qg_min),np.abs(case.qg_max)),dtype=torch.float32,device=DEVICE).view(1,-1)
-        self.backbone = nn.Sequential(BayesLinear(in_dim, HIDDEN_DIM), nn.SiLU(), nn.Dropout(0.05), BayesLinear(HIDDEN_DIM, HIDDEN_DIM), nn.SiLU())
-        self.gmm_head = BayesLinear(HIDDEN_DIM, N_GMM_COMPONENTS*3)
-        self.rec_head = nn.Sequential(BayesLinear(HIDDEN_DIM + in_dim + 1, HIDDEN_DIM), nn.SiLU(), BayesLinear(HIDDEN_DIM, 1+2*len(case.gen_buses)))
-    def kl_loss(self):
-        k=torch.tensor(0.0,device=DEVICE)
-        for m in self.modules():
-            if hasattr(m,'kl_loss'): k=k+m.kl_loss()
-        return k
-    def forward_gmm_single(self, xmu, sample=True):
-        h = self.backbone(xmu); out=self.gmm_head(h, sample=sample); K=N_GMM_COMPONENTS
-        lw,mu,ls=out[:,:K],out[:,K:2*K],out[:,2*K:3*K]
-        w=torch.softmax(lw,dim=1); s=torch.nn.functional.softplus(ls)+GMM_SIGMA_FLOOR
-        return h,w,mu,s
-    def recover_boundary_dispatch_from_h_fixed_theta(self,henc,xr,h_label,hm,hs,tm,ts,alpha,beta,sample=True,bound_t_output=True):
-        hn=(h_label-hm)/(hs+1e-9); o=self.rec_head(torch.cat([henc,xr,hn],dim=1)); t_n=o[:,0:1];
-        if bound_t_output: t_n=torch.tanh(t_n)
-        t=tm+ts*t_n; ng=len(self.gen_buses); pg_n=o[:,1:1+ng]; qg_n=o[:,1+ng:1+2*ng]
-        pg=self.pg_min_t + (self.pg_max_t-self.pg_min_t)*torch.sigmoid(pg_n); qg=qg_n*(self.qg_absmax_t+1e-6)
-        p0=alpha*h_label-beta*t; q0=beta*h_label+alpha*t
-        return p0,q0,pg,qg,t
+    def recover_boundary_dispatch_from_h_fixed_theta(self, hidden_feature, x_real_norm, h_label, h_mean, h_std, t_mean, t_std, alpha, beta, sample=True):
+        h_norm = (h_label - h_mean) / (h_std + 1e-9)
+        out = self.rec_out(torch.cat([hidden_feature, x_real_norm, h_norm], dim=1), sample=sample)
+        t_norm = out[:, 0:1]
+        raw_pg = out[:, 1:1+self.n_gen]
+        raw_qg = out[:, 1+self.n_gen:1+2*self.n_gen]
+        t_hat = t_mean + t_std * t_norm
+        pg_hat = self.pg_min_t + torch.sigmoid(raw_pg) * (self.pg_max_t - self.pg_min_t)
+        qg_hat = self.qg_min_t + torch.sigmoid(raw_qg) * (self.qg_max_t - self.qg_min_t)
+        p0_hat = alpha * h_label - beta * t_hat
+        q0_hat = beta * h_label + alpha * t_hat
+        return p0_hat, q0_hat, pg_hat, qg_hat, t_hat
 
     def kl_divergence(self):
-        return sum(layer.kl_divergence() for layer in self.layers) + self.gmm_out.kl_divergence() + self.rec_hidden.kl_divergence() + self.rec_out.kl_divergence()
+        return sum(layer.kl_divergence() for layer in self.layers) + self.gmm_out.kl_divergence() + self.rec_out.kl_divergence()
 
 def evaluate_single_theta_model(net, norm, XMU_scen, YH_theta_scen, theta_idx, theta_list, save_cdf_path=None):
     theta = float(theta_list[theta_idx]); alpha, beta = float(np.cos(theta)), float(np.sin(theta))
     hm, hs = float(norm['h_mean'][0,0]), float(norm['h_std'][0,0])
-    arms = []; q05e = []; q50e = []; q95e = []; me = []; se = []
-    plot_payload = None
+    errs = {q:[] for q in [0.05,0.25,0.50,0.75,0.95]}; arms=[]; me=[]; se=[]; payload=None
     for i in range(XMU_scen.shape[0]):
         ys = np.asarray(YH_theta_scen[i], dtype=float); ys = ys[np.isfinite(ys)]
         if ys.size < 4: continue
-        z = np.linspace(ys.min()-0.2, ys.max()+0.2, 250)
-        emp = np.searchsorted(np.sort(ys), z, side='right') / ys.size
+        grid = np.linspace(ys.min()-0.2, ys.max()+0.2, 250)
+        emp_cdf = np.searchsorted(np.sort(ys), grid, side='right') / ys.size
         xt = torch.tensor((XMU_scen[i:i+1]-norm['x_mu_mean'])/norm['x_mu_std'], dtype=torch.float32, device=DEVICE)
         with torch.no_grad():
             _, w, mu, sigma = net.forward_gmm_single(xt, sample=False)
         w = w.cpu().numpy().reshape(-1); mu = mu.cpu().numpy().reshape(-1); sigma = sigma.cpu().numpy().reshape(-1)
-        pred = gmm_cdf((z-hm)/(hs+1e-9), w, mu, sigma)
-        arms.append(100*np.sqrt(np.mean((pred-emp)**2)))
-        for q, bag in [(0.05,q05e),(0.5,q50e),(0.95,q95e)]:
-            qp = hm + hs * gmm_quantile(q, w, mu, sigma)
-            bag.append(float(qp - np.quantile(ys, q)))
-        mean_p = hm + hs * float(np.sum(w * mu))
-        std_p = hs * float(np.sqrt(np.sum(w * (sigma**2 + mu**2)) - (np.sum(w*mu)**2)))
-        me.append(mean_p - float(np.mean(ys))); se.append(std_p - float(np.std(ys)))
-        if plot_payload is None: plot_payload = (z, emp, pred)
-    if save_cdf_path and plot_payload is not None:
-        z, emp, pred = plot_payload
+        pred_cdf = gmm_cdf((grid-hm)/(hs+1e-9), w, mu, sigma)
+        arms.append(100*np.sqrt(np.mean((pred_cdf-emp_cdf)**2)))
+        for q in errs:
+            errs[q].append(float((hm + hs * gmm_quantile(q, w, mu, sigma)) - np.quantile(ys, q)))
+        pred_mean = hm + hs * float(np.sum(w*mu))
+        pred_std = hs * float(np.sqrt(max(0.0, np.sum(w*(sigma**2 + mu**2)) - (np.sum(w*mu)**2))))
+        me.append(pred_mean - float(np.mean(ys))); se.append(pred_std - float(np.std(ys)))
+        if payload is None: payload=(grid, emp_cdf, pred_cdf)
+    if save_cdf_path and payload is not None:
+        grid, emp_cdf, pred_cdf = payload
         plt.figure(figsize=(7,5), dpi=180)
-        plt.plot(z, emp, 'k-', lw=2, label='Empirical CDF')
-        plt.plot(z, pred, 'r--', lw=2, label='Predicted GMM CDF')
-        plt.title(f'CDF theta_idx={theta_idx:02d}')
+        plt.plot(grid, emp_cdf, 'k-', lw=2, label='Empirical CDF')
+        plt.plot(grid, pred_cdf, 'r--', lw=2, label='Predicted GMM CDF')
+        plt.title(f'CDF theta_idx={theta_idx:02d}, theta={theta:.4f}')
         plt.grid(alpha=0.2); plt.legend(); plt.tight_layout(); plt.savefig(save_cdf_path, dpi=220); plt.close()
-    return dict(theta_idx=theta_idx, theta=theta, alpha=alpha, beta=beta, cdf_arms=float(np.mean(arms)) if arms else np.nan, q50_rmse=float(np.sqrt(np.mean(np.square(q50e)))) if q50e else np.nan, mean_error=float(np.mean(me)) if me else np.nan, std_error=float(np.mean(se)) if se else np.nan, q05_error=float(np.mean(q05e)) if q05e else np.nan, q95_error=float(np.mean(q95e)) if q95e else np.nan, n_eval_scenarios=int(len(arms)))
+    return dict(theta_idx=theta_idx, theta=theta, alpha=alpha, beta=beta, cdf_arms=float(np.mean(arms)) if arms else np.nan, q05_error=float(np.mean(errs[0.05])) if errs[0.05] else np.nan, q25_error=float(np.mean(errs[0.25])) if errs[0.25] else np.nan, q50_error=float(np.mean(errs[0.50])) if errs[0.50] else np.nan, q75_error=float(np.mean(errs[0.75])) if errs[0.75] else np.nan, q95_error=float(np.mean(errs[0.95])) if errs[0.95] else np.nan, q50_rmse=float(np.sqrt(np.mean(np.square(errs[0.50])))) if errs[0.50] else np.nan, mean_error=float(np.mean(me)) if me else np.nan, std_error=float(np.mean(se)) if se else np.nan, n_eval_scenarios=int(len(arms)))
 
 def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list):
     d = flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list)
-    n_scen = XMU.shape[0]; mc = YH.shape[1]; rng = np.random.default_rng(SEED_TRAIN)
-    perm = rng.permutation(n_scen); n_val = max(1, int(0.1*n_scen)); tr, va = perm[:-n_val], perm[-n_val:]
-    scen_idx_flat = np.repeat(np.arange(n_scen), mc)
-    tr_mask = np.isin(scen_idx_flat, tr); va_mask = np.isin(scen_idx_flat, va)
-    xmu_tr, xr_tr, yh_tr = d['xmu_flat'][tr_mask], d['xreal_flat'][tr_mask], d['yh_flat'][tr_mask]
-    yp0_tr, yq0_tr, yt_tr, ypg_tr, yqg_tr = d['yp0_flat'][tr_mask], d['yq0_flat'][tr_mask], d['yt_flat'][tr_mask], d['ypg_flat'][tr_mask], d['yqg_flat'][tr_mask]
-    norm = {'x_mu_mean':xmu_tr.mean(0,keepdims=True),'x_mu_std':xmu_tr.std(0,keepdims=True)+1e-9,'x_real_mean':xr_tr.mean(0,keepdims=True),'x_real_std':xr_tr.std(0,keepdims=True)+1e-9,'h_mean':np.array([[yh_tr.mean()]]),'h_std':np.array([[yh_tr.std()+1e-9]]),'t_mean':np.array([[yt_tr.mean()]]),'t_std':np.array([[yt_tr.std()+1e-9]]),'theta_idx':theta_idx,'theta':d['theta'],'alpha':d['alpha'],'beta':d['beta']}
-    to = lambda a: torch.tensor(a, dtype=torch.float32, device=DEVICE)
-    net = BayesSingleThetaGMM2SupportNet(XMU.shape[1], case).to(DEVICE); opt = torch.optim.Adam(net.parameters(), lr=LR)
-    hm, hs, tm, ts = to(norm['h_mean']), to(norm['h_std']), to(norm['t_mean']), to(norm['t_std'])
-    xmu_n = to((xmu_tr-norm['x_mu_mean'])/norm['x_mu_std']); xr_n = to((xr_tr-norm['x_real_mean'])/norm['x_real_std']); xr_raw = to(xr_tr)
-    yh_t, yp0_t, yq0_t, yt_t, ypg_t, yqg_t = to(yh_tr), to(yp0_tr), to(yq0_tr), to(yt_tr), to(ypg_tr), to(yqg_tr)
-    print('[v15-theta-train-start]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'theta = {d["theta"]}', flush=True); print(f'alpha = {d["alpha"]}', flush=True); print(f'beta = {d["beta"]}', flush=True); print(f'epochs = {EPOCHS}', flush=True); print(f'train samples = {xmu_n.shape[0]}', flush=True); print(f'val samples = {int(va_mask.sum())}', flush=True); print(f'batch size = {BATCH_SIZE}', flush=True); print(f'device = {DEVICE}', flush=True); print(f'DATASET_CACHE_MODE = {DATASET_CACHE_MODE}', flush=True)
+    rng=np.random.default_rng(SEED_TRAIN); n_scen=XMU.shape[0]; mc=YH.shape[1]
+    perm=rng.permutation(n_scen); n_val=max(1,int(round(0.1*n_scen))); va=perm[-n_val:]; tr=perm[:-n_val]
+    scen_flat=np.repeat(np.arange(n_scen), mc); tr_mask=np.isin(scen_flat,tr); va_mask=np.isin(scen_flat,va)
+    xmu_tr, xr_tr, yh_tr, yt_tr = d['xmu_flat'][tr_mask], d['xreal_flat'][tr_mask], d['yh_flat'][tr_mask], d['yt_flat'][tr_mask]
+    yp0_tr, yq0_tr, ypg_tr, yqg_tr = d['yp0_flat'][tr_mask], d['yq0_flat'][tr_mask], d['ypg_flat'][tr_mask], d['yqg_flat'][tr_mask]
+    norm={'x_mu_mean':xmu_tr.mean(0,keepdims=True),'x_mu_std':xmu_tr.std(0,keepdims=True)+1e-9,'x_real_mean':xr_tr.mean(0,keepdims=True),'x_real_std':xr_tr.std(0,keepdims=True)+1e-9,'h_mean':np.array([[yh_tr.mean()]]),'h_std':np.array([[yh_tr.std()+1e-9]]),'t_mean':np.array([[yt_tr.mean()]]),'t_std':np.array([[yt_tr.std()+1e-9]]),'theta_idx':theta_idx,'theta':d['theta'],'alpha':d['alpha'],'beta':d['beta']}
+    to=lambda a: torch.tensor(a,dtype=torch.float32,device=DEVICE)
+    xmu_n=to((xmu_tr-norm['x_mu_mean'])/norm['x_mu_std']); xr_n=to((xr_tr-norm['x_real_mean'])/norm['x_real_std']); xr_raw=to(xr_tr)
+    yh_t, yt_t, ypg_t, yqg_t=to(yh_tr),to(yt_tr),to(ypg_tr),to(yqg_tr)
+    hm,hs,tm,ts=to(norm['h_mean']),to(norm['h_std']),to(norm['t_mean']),to(norm['t_std'])
+    net=BayesSingleThetaGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE)
+    opt=torch.optim.Adam(net.parameters(),lr=LR)
+    print('[v15-theta-train-start]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'theta = {d["theta"]}', flush=True); print(f'alpha = {d["alpha"]}', flush=True); print(f'beta = {d["beta"]}', flush=True); print(f'epochs = {EPOCHS}', flush=True); print(f'train samples = {xmu_n.shape[0]}', flush=True); print(f'val samples = {int(va_mask.sum())}', flush=True); print(f'batch size = {BATCH_SIZE}', flush=True); print(f'device = {DEVICE}', flush=True); print(f'DATASET_CACHE_MODE = {DATASET_CACHE_MODE}', flush=True); print('training target = h_theta', flush=True); print('v8-style realization-conditioned physics = True', flush=True)
     rows=[]; n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; t0=datetime.now()
     for ep in range(EPOCHS):
-        ep0=datetime.now(); p=np.random.default_rng(SEED_TRAIN+ep).permutation(n)
+        ep0=datetime.now(); p=np.random.default_rng(SEED_TRAIN+ep).permutation(n); beta_kl=min(1.0,(ep+1)/max(1,KL_WARMUP_EPOCHS))*BETA_KL_MAX
         stat={k:0.0 for k in ['total','nll','boundary','dispatch','t','phys','support','kl']}
         for b in range(nb):
             ii=p[b*BATCH_SIZE:min((b+1)*BATCH_SIZE,n)]
-            feat,w,mu,sigma=net.forward_gmm_single(xmu_n[ii], sample=True)
+            feat,w,mu,sigma=net.forward_gmm_single(xmu_n[ii],sample=True)
             h_norm=(yh_t[ii]-hm)/(hs+1e-9)
-            nll_loss = -gmm_log_prob(h_norm,w,mu,sigma).mean()
-            p0,q0,pg,qg,t_hat=net.recover_boundary_dispatch_from_h_fixed_theta(feat,xr_n[ii],yh_t[ii],hm,hs,tm,ts,d['alpha'],d['beta'],sample=True)
-            boundary_sup_loss = ((yh_t[ii]-(hm+hs*torch.sum(w*mu,dim=1,keepdim=True)))**2).mean()
-            dispatch_sup_loss = ((pg-ypg_t[ii])**2).mean() + ((qg-yqg_t[ii])**2).mean()
-            t_sup_loss = ((t_hat-yt_t[ii])**2).mean()
-            phys_loss = physics_loss_flex(case, xr_raw[ii], p0, q0, pg, qg)
-            support_consist_loss = ((d['alpha']*p0 + d['beta']*q0 - yh_t[ii])**2).mean()
-            kl_loss = net.kl_divergence() / max(1, n)
-            beta_kl = min(1.0, (ep+1)/max(1, KL_WARMUP_EPOCHS)) * BETA_KL_MAX
-            total_loss = nll_loss + LAM_BOUNDARY_SUP*boundary_sup_loss + LAM_DISPATCH_SUP*dispatch_sup_loss + LAM_T_SUP*t_sup_loss + LAM_PHYS_FLEX*phys_loss + LAM_SUPPORT_CONSIST*support_consist_loss + beta_kl*kl_loss
-            opt.zero_grad(); total_loss.backward(); opt.step()
-            vals=[total_loss,nll_loss,boundary_sup_loss,dispatch_sup_loss,t_sup_loss,phys_loss,support_consist_loss,kl_loss]
-            for k,v in zip(stat.keys(),vals): stat[k]+=float(v.detach().cpu())
-            if PRINT_BATCH_PROGRESS and ((b+1)%LOG_EVERY_N_BATCHES==0):
-                print(f"[v15-theta-batch] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} batch {b+1:03d}/{nb:03d} total={float(total_loss):.6f} nll={float(nll_loss):.6f} phys={float(phys_loss):.6f}", flush=True)
+            nll_loss=(-gmm_log_prob(h_norm,w,mu,sigma)).mean()
+            p0_hat,q0_hat,pg_hat,qg_hat,t_hat=net.recover_boundary_dispatch_from_h_fixed_theta(feat,xr_n[ii],yh_t[ii],hm,hs,tm,ts,d['alpha'],d['beta'],sample=True)
+            h_pred_mean_phys=hm+hs*torch.sum(w*mu,dim=1,keepdim=True)
+            boundary_sup_loss=((h_pred_mean_phys-yh_t[ii])**2).mean()
+            dispatch_sup_loss=((pg_hat-ypg_t[ii])**2).mean()+((qg_hat-yqg_t[ii])**2).mean()
+            t_sup_loss=((t_hat-yt_t[ii])**2).mean()
+            phys_loss=physics_loss_flex(case,xr_raw[ii],p0_hat,q0_hat,pg_hat,qg_hat)
+            support_consist_loss=((d['alpha']*p0_hat + d['beta']*q0_hat - yh_t[ii])**2).mean()
+            kl_loss=net.kl_divergence()/max(1,n)
+            loss=nll_loss+LAM_BOUNDARY_SUP*boundary_sup_loss+LAM_DISPATCH_SUP*dispatch_sup_loss+LAM_T_SUP*t_sup_loss+LAM_PHYS_FLEX*phys_loss+LAM_SUPPORT_CONSIST*support_consist_loss+beta_kl*kl_loss
+            opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(net.parameters(),5.0); opt.step()
+            for k,v in zip(stat.keys(),[loss,nll_loss,boundary_sup_loss,dispatch_sup_loss,t_sup_loss,phys_loss,support_consist_loss,kl_loss]): stat[k]+=float(v.detach().cpu())
+            if PRINT_BATCH_PROGRESS and (b+1)%LOG_EVERY_N_BATCHES==0:
+                print(f"[v15-theta-batch] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} batch {b+1:03d}/{nb:03d} total={float(loss):.6f} nll={float(nll_loss):.6f} phys={float(phys_loss):.6f}", flush=True)
         for k in stat: stat[k]/=max(1,nb)
-        cdf_path=f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png" if ep==EPOCHS-1 else None
-        val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=cdf_path)
+        val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=(f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png" if ep==EPOCHS-1 else None))
         elapsed=(datetime.now()-t0).total_seconds(); ep_sec=(datetime.now()-ep0).total_seconds(); eta=(EPOCHS-ep-1)*ep_sec
         print(f"[v15-theta-train] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} stage=A lr={opt.param_groups[0]['lr']:.6g}", flush=True)
         print(f"  loss: total={stat['total']:.6f} nll={stat['nll']:.6f} boundary={stat['boundary']:.6f} dispatch={stat['dispatch']:.6f} t={stat['t']:.6f} phys={stat['phys']:.6f} support={stat['support']:.6f} kl={stat['kl']:.6f}", flush=True)
         print(f"  val: cdf_arms={val['cdf_arms']:.6f} q50_rmse={val['q50_rmse']:.6f} mean_error={val['mean_error']:.6f} std_error={val['std_error']:.6f}", flush=True)
         rows.append({'epoch':ep+1,'stage':'A','lr':opt.param_groups[0]['lr'],'epoch_time_sec':ep_sec,'elapsed_sec':elapsed,'eta_sec':eta,'total_loss':stat['total'],'nll_loss':stat['nll'],'boundary_sup_loss':stat['boundary'],'dispatch_sup_loss':stat['dispatch'],'t_sup_loss':stat['t'],'phys_loss':stat['phys'],'support_consist_loss':stat['support'],'kl_loss':stat['kl'],'val_cdf_arms':val['cdf_arms'],'val_q50_rmse':val['q50_rmse'],'val_mean_error':val['mean_error'],'val_std_error':val['std_error']})
-    Path(TRAINING_RESULT_DIR).mkdir(parents=True, exist_ok=True)
+    Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True)
     tag=f"theta_independent_theta{theta_idx:02d}"
     model_path=f"{TRAINING_RESULT_DIR}/{tag}_model.pt"; norm_path=f"{TRAINING_RESULT_DIR}/{tag}_norm.pkl"; cfg_path=f"{TRAINING_RESULT_DIR}/{tag}_config.json"; log_path=f"{TRAINING_RESULT_DIR}/{tag}_training_log.csv"; val_path=f"{TRAINING_RESULT_DIR}/{tag}_val_metrics.csv"
-    torch.save(net.state_dict(), model_path)
+    torch.save(net.state_dict(),model_path)
     with open(norm_path,'wb') as f: pickle.dump(norm,f)
-    with open(cfg_path,'w',encoding='utf-8') as f: json.dump({'theta_idx':theta_idx,'theta':d['theta'],'alpha':d['alpha'],'beta':d['beta'],'RUN_MODE':RUN_MODE,'NUM_SCENARIOS':NUM_SCENARIOS,'MC_PER_SCENARIO':MC_PER_SCENARIO,'N_THETA':N_THETA,'EPOCHS':EPOCHS,'DATASET_CACHE_TAG':DATASET_CACHE_TAG,'TRAINING_RUN_TAG':TRAINING_RUN_TAG},f,ensure_ascii=False,indent=2)
+    with open(cfg_path,'w',encoding='utf-8') as f: json.dump({'theta_idx':theta_idx,'theta':d['theta'],'alpha':d['alpha'],'beta':d['beta'],'RUN_MODE':RUN_MODE,'NUM_SCENARIOS':NUM_SCENARIOS,'MC_PER_SCENARIO':MC_PER_SCENARIO,'N_THETA':N_THETA,'EPOCHS':EPOCHS,'DATASET_CACHE_TAG':DATASET_CACHE_TAG,'TRAINING_RUN_TAG':TRAINING_RUN_TAG,'model_type':'v8_style_theta_independent_support_bpinN'},f,ensure_ascii=False,indent=2)
     pd.DataFrame(rows).to_csv(log_path,index=False)
     final_val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png")
     pd.DataFrame([final_val]).to_csv(val_path,index=False)
     print('[v15-theta-train-finished]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'total epochs = {EPOCHS}', flush=True); print(f'total training time = {(datetime.now()-t0).total_seconds():.2f}', flush=True); print(f'saved model path = {model_path}', flush=True); print(f'saved norm path = {norm_path}', flush=True); print(f'saved config path = {cfg_path}', flush=True); print(f'saved training log path = {log_path}', flush=True); print(f'saved val metrics path = {val_path}', flush=True)
     return final_val
 
-def train_theta_independent_models(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,theta_list):
+def train_theta_independent_models(case, XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, theta_list):
     theta_list_to_train = DEBUG_THETA_LIST if THETA_TRAIN_MODE=='subset' else TRAIN_THETA_LIST
     out=[]
     for k,j in enumerate(theta_list_to_train, start=1):
@@ -2228,23 +2202,58 @@ def train_theta_independent_models(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,
     df.to_csv(f"{TRAINING_RESULT_DIR}/theta_independent_all_theta_metrics_v15.csv",index=False)
     return df
 
+def combine_theta_independent_flex_domain(case, XMU, YH, theta_list):
+    model_paths=[Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{j:02d}_model.pt") for j in range(N_THETA)]
+    norm_paths=[Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{j:02d}_norm.pkl") for j in range(N_THETA)]
+    if any((not m.exists()) or (not n.exists()) for m,n in zip(model_paths,norm_paths)):
+        print('[v15-combine] warning: missing theta models, skip combine.', flush=True); return None
+    i=0; xmu_one=XMU[i]
+    hq={0.05:[],0.50:[],0.95:[]}
+    for j in range(N_THETA):
+        norm=pickle.load(open(norm_paths[j],'rb'))
+        net=BayesSingleThetaGMM2SupportNet(len(xmu_one),case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE)
+        net.load_state_dict(torch.load(model_paths[j],map_location=DEVICE)); net.eval()
+        xt=torch.tensor(((xmu_one.reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std']),dtype=torch.float32,device=DEVICE)
+        with torch.no_grad(): _,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
+        w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1)
+        hm,hs=float(norm['h_mean'][0,0]),float(norm['h_std'][0,0])
+        for q in hq: hq[q].append(hm+hs*gmm_quantile(q,w,mu,sigma))
+    polys={q:support_values_to_polygon(theta_list,np.array(v,dtype=float)) for q,v in hq.items()}
+    for q,p in polys.items():
+        if p is None or len(p)<3: print(f'[v15-combine] warning: invalid polygon q={q}', flush=True)
+    def close(p): return np.r_[p[:,0],p[0,0]], np.r_[p[:,1],p[0,1]]
+    plt.figure(figsize=(7,6),dpi=220)
+    for q,c in [(0.05,'#60a5fa'),(0.50,'#1d4ed8'),(0.95,'#0f766e')]:
+        p=polys[q]
+        if p is not None and len(p)>2:
+            x,y=close(p); plt.plot(x,y,color=c,lw=2,label=f'BPINN q{int(q*100):02d}')
+    if YH is not None and YH.shape[0]>i:
+        ymc=YH[i,:,:]
+        for q,c in [(0.05,'#93c5fd'),(0.50,'#3b82f6'),(0.95,'#14b8a6')]:
+            h=np.quantile(ymc,q,axis=0); p=support_values_to_polygon(theta_list,h)
+            if p is not None and len(p)>2:
+                x,y=close(p); plt.plot(x,y,'--',color=c,lw=1.5,label=f'MC q{int(q*100):02d}')
+    plt.title('theta-independent v8-style support BPINN')
+    plt.axis('equal'); plt.grid(alpha=0.2); plt.legend(); plt.tight_layout()
+    out=f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"; plt.savefig(out,dpi=240); plt.close()
+    return out
+
 def write_visualization_manifest_theta_independent_v15():
     Path(TRAINING_RESULT_DIR).mkdir(parents=True, exist_ok=True)
-    candidates=[f"{TRAINING_RESULT_DIR}/theta_independent_theta02_training_log.csv",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_val_metrics.csv",f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta02_v15.png",f"{TRAINING_RESULT_DIR}/theta_independent_all_theta_metrics_v15.csv"]
+    candidates=[f"{TRAINING_RESULT_DIR}/theta_independent_theta02_training_log.csv",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_val_metrics.csv",f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta02_v15.png",f"{TRAINING_RESULT_DIR}/theta_independent_all_theta_metrics_v15.csv",f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"]
     rows=[[Path(f).name] for f in candidates if Path(f).exists()]
-    pd.DataFrame(rows, columns=['file']).to_csv(f"{TRAINING_RESULT_DIR}/visualization_manifest_theta_independent_v15.csv", index=False)
+    pd.DataFrame(rows,columns=['file']).to_csv(f"{TRAINING_RESULT_DIR}/visualization_manifest_theta_independent_v15.csv",index=False)
 
 def main_theta_independent():
     print('[v15-theta-independent] start', flush=True)
-    case=build_ieee33_case()
-    if USE_DATASET_CACHE:
-        XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, active_records, all_names = get_or_build_flex_dataset_cache(case)
-    else:
-        XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, active_records, all_names = generate_flex_dataset(case, num_scenarios=NUM_SCENARIOS, mc_per_scenario=MC_PER_SCENARIO, theta_list=THETA_LIST, seed=SEED_DATA)
+    case = build_ieee33_case()
+    XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, active_records, all_names = get_or_build_flex_dataset_cache(case)
     if RUN_TRAINING:
         train_theta_independent_models(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,THETA_LIST)
+    if RUN_COMBINE_THETA_FLEX_DOMAIN or THETA_TRAIN_MODE == 'all':
+        combine_theta_independent_flex_domain(case,XMU,YH,THETA_LIST)
     write_visualization_manifest_theta_independent_v15()
     print('[v15-theta-independent] done', flush=True)
 
-if __name__=='__main__':
+if __name__ == "__main__":
     main_theta_independent()
