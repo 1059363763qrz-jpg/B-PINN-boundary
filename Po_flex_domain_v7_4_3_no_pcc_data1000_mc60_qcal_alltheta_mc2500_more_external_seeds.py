@@ -170,14 +170,67 @@ USE_DATASET_CACHE = True
 DATASET_CACHE_MODE = "load_only"
 # First run for data800: set DATASET_CACHE_MODE="rebuild" (or keep auto). After cache built, use "load_only".
 BUILD_DATASET_ONLY = False  # "auto" | "rebuild" | "load_only"
-DATASET_CACHE_DIR = "dataset_cache"
-DATASET_CACHE_TAG = "flex33_data800_800scen_30mc_12theta_seed0_v1"
+DATASET_CACHE_DIR = "dataset_cache_no_pcc_branch_limit_data1000_mc60"
+DATASET_CACHE_TAG = "flex33_data1000_1000scen_60mc_12theta_seed0_no_pcc_branch_limit_v1"
 DATASET_CACHE_NPZ = f"{DATASET_CACHE_DIR}/{DATASET_CACHE_TAG}.npz"
 DATASET_CACHE_PICKLE = f"{DATASET_CACHE_DIR}/{DATASET_CACHE_TAG}_active.pkl"
 DATASET_CACHE_META = f"{DATASET_CACHE_DIR}/{DATASET_CACHE_TAG}_meta.json"
+LINE_LIMIT_MODE = "internal_only_no_pcc"
+USE_EXPLICIT_PCC_LIMITS = False
+PCC_P_MIN = -20.0
+PCC_P_MAX = 20.0
+PCC_Q_MIN = -20.0
+PCC_Q_MAX = 20.0
+INTERNAL_FMAX_P = 5.0
+INTERNAL_FMAX_Q = 5.0
+RUN_V7_NO_PCC_PIPELINE = True
+BUILD_NEW_DATASET = False
+RUN_BRANCH_LIMIT_SANITY = False
+RUN_ALL_THETA_TRAIN = False
+RUN_ALL_THETA_EVAL = False
+RUN_FLEX_SYNTHESIS = False
+SMOKE_TEST = False
+RUN_TARGETED_DIAGNOSTICS = False
+TARGETED_DIAG_DIR = "diagnostics_no_pcc_data1000_mc60_qcal_only"
+DIAG_TARGET_PAIRS = [(4,1),(5,1),(4,2),(2,2),(7,2)]
+DIAG_MC_EVAL = 2500
+DIAG_K_LIST = [20,50]
+DIAG_QUANTILES = [0.01,0.05,0.25,0.50,0.75,0.95,0.99]
+DIAG_PROGRESS_EVERY = 100
+DIAG_CDF_GRID_N = 800
+
+# v7.4 quantile-calibration-only ablation.
+# Original v7style single-theta loss:
+#   loss_old = nll + LAM_T_SUP*t_sup + LAM_DISPATCH_SUP*disp + LAM_PHYS_FLEX*phys + beta_kl*kl
+# where nll is the GMM negative log likelihood on h_theta, t_sup supervises
+# t=-beta*P0+alpha*Q0, disp supervises Pg/Qg, phys is quantile physics on recovered
+# dispatch, and kl is the Bayesian-layer KL. h_theta remains the only probabilistic
+# target; t is an auxiliary recovery variable, not a separate probability model.
+RUN_QCAL_ALLTHETA_MORE_SEEDS_EVAL_ONLY = True
+RUN_QUANTILE_CALIBRATION_TRAIN = False
+EXISTING_QCAL_THETA_LIST = [2,4,5,7]
+NEED_TRAIN_THETA_LIST = [0,1,3,6,8,9,10,11]
+HARD_THETA_LIST = []
+TRAIN_THETA_LIST = []
+ALL_THETA_LIST = list(range(N_THETA))
+SKIP_QCAL_TRAIN_IF_MODEL_EXISTS = True
+USE_SCENARIO_QUANTILE_CALIBRATION = True
+SCENARIO_Q_TAUS = [0.05,0.25,0.50,0.75,0.95]
+SCENARIO_Q_WEIGHTS = [1.0,1.0,3.0,1.0,1.0]
+LAM_SCEN_Q_A = 0.00
+LAM_SCEN_Q_B = 0.05
+LAM_SCEN_Q_C = 0.12
+LAM_SCEN_Q_D = 0.20
+USE_SCENARIO_MOMENT_CALIBRATION = True
+LAM_SCEN_MEAN = 0.08
+LAM_SCEN_STD = 0.04
+SCEN_Q_START_EPOCH_B = 60
+SCEN_Q_START_EPOCH_C = 140
+SCEN_Q_START_EPOCH_D = 240
+SCENARIO_CALIB_BATCH_MAX_SCENARIOS = 64
 DATASET_VERSION = "flex_support_dataset_v1"
 SAVE_TRAINING_RESULT = True
-TRAINING_RESULT_DIR = "training_results_theta_independent"
+TRAINING_RESULT_DIR = "training_results_theta_independent_v7style_no_pcc_branch_limit_data1000_mc60_qcal_only"
 RUN_TRAINING = True
 RUN_EVAL_ONLY = False
 LOAD_TRAINED_MODEL = False
@@ -187,9 +240,28 @@ LOAD_CONFIG_PATH = "training_results/expB_v7_extendedCD_best_seed0_config.json"
 TRAINING_RUN_TAG = "v15_theta_independent_v8_style"
 RUN_FULL_OPF_EVAL = False
 RUN_FLEX_DOMAIN_PLOTS = False
+RUN_P0_STYLE_EXTERNAL_EVAL = True
+P0_STYLE_EVAL_THETA_LIST = [2]
+# 若只想用 v3 已训练好的 theta02 模型做 P0-style external evaluation，
+# 请设置：
+# RUN_TRAINING = False
+# RUN_EVAL_ONLY = True
+# RUN_P0_STYLE_EXTERNAL_EVAL = True
+# P0_STYLE_EVAL_THETA_LIST = [2]
+# P0_STYLE_SINGLE_SCENARIO_MC = 20  # smoke 测试
+# P0_STYLE_MULTI_SCENARIO_EVAL = False
+#
+# 正式单场景外部验证再改为：
+# P0_STYLE_SINGLE_SCENARIO_MC = 2500
+P0_STYLE_SINGLE_SCENARIO_MC = 2500
+P0_STYLE_MULTI_SCENARIO_EVAL = False
+P0_STYLE_N_TEST_SCENARIOS = 20
+P0_STYLE_MULTI_SCENARIO_MC = 800
+P0_STYLE_EVAL_SEED = SEED_EVAL
+P0_STYLE_EXTERNAL_EVAL_DIR = TRAINING_RESULT_DIR
 THETA_TRAIN_MODE = "subset"
 TRAIN_THETA_LIST = list(range(N_THETA))
-DEBUG_THETA_LIST = [2]
+DEBUG_THETA_LIST = [6]
 RUN_COMBINE_THETA_FLEX_DOMAIN = False
 MULTI_SCENARIO_FORMAL_EVAL = True
 N_FORMAL_EVAL_SCENARIOS = 10
@@ -218,7 +290,7 @@ class GridCase:
     pv_buses:np.ndarray; pv_pmax:np.ndarray; pv_pf:float; gen_buses:np.ndarray
     pg_min:np.ndarray; pg_max:np.ndarray; qg_min:np.ndarray; qg_max:np.ndarray
     children:List[List[int]]; parent_branch:np.ndarray; parent_bus:np.ndarray
-    topo_order:List[int]; rev_topo_order:List[int]; in_branches:List[List[int]]; out_branches:List[List[int]]
+    topo_order:List[int]; rev_topo_order:List[int]; in_branches:List[List[int]]; out_branches:List[List[int]]; pcc_branch_mask:np.ndarray; internal_branch_mask:np.ndarray; pcc_branch_indices:np.ndarray; line_limit_mode:str; use_explicit_pcc_limits:bool; pcc_p_min:float; pcc_p_max:float; pcc_q_min:float; pcc_q_max:float
 
 def _build_radial_topology(n_bus, root, fb, tb):
     n_br = fb.size; children=[[] for _ in range(n_bus)]
@@ -247,7 +319,11 @@ def build_ieee33_case():
     pg_min=np.zeros(4); pg_max=np.array([0.45,0.40,0.90,0.75],dtype=float)
     qg_min=np.array([-1.20,-1.00,-1.80,-1.50],dtype=float); qg_max=np.array([1.20,1.00,1.80,1.50],dtype=float)
     c,pb,pbu,to,rt,inb,outb=_build_radial_topology(nb,0,fb,tb)
-    return GridCase(nb,0,fb,tb,r,x,0.95,1.05,np.full(nl,5.0),np.full(nl,5.0),pd,qd,pv_b,pv_max,0.98,gen_b,pg_min,pg_max,qg_min,qg_max,c,pb,pbu,to,rt,inb,outb)
+    fmax_p=np.full(nl,INTERNAL_FMAX_P); fmax_q=np.full(nl,INTERNAL_FMAX_Q)
+    pcc_branch_indices=np.array(outb[0],dtype=int)
+    pcc_branch_mask=np.zeros(nl,dtype=bool); pcc_branch_mask[pcc_branch_indices]=True
+    internal_branch_mask=~pcc_branch_mask
+    return GridCase(nb,0,fb,tb,r,x,0.95,1.05,fmax_p,fmax_q,pd,qd,pv_b,pv_max,0.98,gen_b,pg_min,pg_max,qg_min,qg_max,c,pb,pbu,to,rt,inb,outb,pcc_branch_mask,internal_branch_mask,pcc_branch_indices,LINE_LIMIT_MODE,USE_EXPLICIT_PCC_LIMITS,PCC_P_MIN,PCC_P_MAX,PCC_Q_MIN,PCC_Q_MAX)
 
 def sample_trunc_normal(mu,sigma,lo=0.0,hi=None):
     x=np.random.normal(mu,sigma); x=max(lo,x)
@@ -279,9 +355,15 @@ def solve_flex_support_gurobi_33bus(case,pd,qd,pr,qr,alpha,beta,return_detail=Fa
         for g in range(len(case.gen_buses)):
             m.addConstr(Pg[g]>=case.pg_min[g]); m.addConstr(Pg[g]<=case.pg_max[g]); m.addConstr(Qg[g]>=case.qg_min[g]); m.addConstr(Qg[g]<=case.qg_max[g])
         for l in range(nl):
+            is_pcc_branch = bool(case.pcc_branch_mask[l])
+            if case.line_limit_mode == "internal_only_no_pcc" and is_pcc_branch:
+                continue
             m.addConstr(P[l]<=case.fmax_p[l]); m.addConstr(P[l]>=-case.fmax_p[l]); m.addConstr(Q[l]<=case.fmax_q[l]); m.addConstr(Q[l]>=-case.fmax_q[l])
         root_out=case.out_branches[case.root]
         m.addConstr(gp.quicksum(P[l] for l in root_out)==P0); m.addConstr(gp.quicksum(Q[l] for l in root_out)==Q0)
+        if case.use_explicit_pcc_limits:
+            m.addConstr(P0 >= case.pcc_p_min); m.addConstr(P0 <= case.pcc_p_max)
+            m.addConstr(Q0 >= case.pcc_q_min); m.addConstr(Q0 <= case.pcc_q_max)
         bus_to_gen={int(b):g for g,b in enumerate(case.gen_buses)}
         for i in range(case.n_bus):
             if i==case.root: continue
@@ -314,10 +396,21 @@ def solve_flex_support_gurobi_33bus(case,pd,qd,pr,qr,alpha,beta,return_detail=Fa
 
 def get_active_constraint_signature(case,sol,tol=1e-4):
     pg,qg,v,p,q=sol['Pg'],sol['Qg'],sol['V'],sol['P'],sol['Q']; names=[]; bits=[]
+    p0 = float(sol.get('P0', np.nan)); q0 = float(sol.get('Q0', np.nan))
     for g in range(len(case.gen_buses)): names += [f'Pg_min_g{g}',f'Pg_max_g{g}',f'Qg_min_g{g}',f'Qg_max_g{g}']; bits += [int(pg[g]<=case.pg_min[g]+tol),int(pg[g]>=case.pg_max[g]-tol),int(qg[g]<=case.qg_min[g]+tol),int(qg[g]>=case.qg_max[g]-tol)]
     for i in range(case.n_bus): names += [f'Vmin_bus{i+1:02d}',f'Vmax_bus{i+1:02d}']; bits += [int(v[i]<=case.vmin**2+tol),int(v[i]>=case.vmax**2-tol)]
-    for l in range(case.from_bus.size): names += [f'Pline_pos_l{l:02d}',f'Pline_neg_l{l:02d}',f'Qline_pos_l{l:02d}',f'Qline_neg_l{l:02d}']; bits += [int(p[l]>=case.fmax_p[l]-tol),int(p[l]<=-case.fmax_p[l]+tol),int(q[l]>=case.fmax_q[l]-tol),int(q[l]<=-case.fmax_q[l]+tol)]
-    sig=tuple(bits); act=[n for n,b in zip(names,bits) if b==1]; return sig,act,names
+    for l in range(case.from_bus.size):
+        is_pcc_branch = bool(case.pcc_branch_mask[l])
+        if case.line_limit_mode == "internal_only_no_pcc" and is_pcc_branch:
+            continue
+        names += [f'Pline_pos_l{l:02d}',f'Pline_neg_l{l:02d}',f'Qline_pos_l{l:02d}',f'Qline_neg_l{l:02d}']; bits += [int(p[l]>=case.fmax_p[l]-tol),int(p[l]<=-case.fmax_p[l]+tol),int(q[l]>=case.fmax_q[l]-tol),int(q[l]<=-case.fmax_q[l]+tol)]
+    if case.use_explicit_pcc_limits:
+        names += ['PCC_P_min','PCC_P_max','PCC_Q_min','PCC_Q_max']
+        bits += [int(p0 <= case.pcc_p_min + tol), int(p0 >= case.pcc_p_max - tol), int(q0 <= case.pcc_q_min + tol), int(q0 >= case.pcc_q_max - tol)]
+    sig=tuple(bits); act=[n for n,b in zip(names,bits) if b==1]
+    if case.line_limit_mode == "internal_only_no_pcc" and any('Qline_pos_l00' == n for n in act):
+        print('[warning] Qline_pos_l00 still appears although PCC branch line limit should be disabled.', flush=True)
+    return sig,act,names
 
 def summarize_active_patterns(active_records,all_names,top_k=10):
     from collections import Counter, defaultdict
@@ -448,7 +541,12 @@ def gmm_cdf(z,w,mu,s):
     return np.sum(w.reshape(1,-1)*norm.cdf((zz-mu.reshape(1,-1))/(s.reshape(1,-1)+1e-12)),axis=1)
 
 def gmm_quantile_torch(w,mu,s,taus,n_iter=50):
-    B,Kmix=w.shape; tt=torch.tensor(taus,device=w.device,dtype=w.dtype).view(1,-1).repeat(B,1); Ktau=tt.shape[1]
+    B,Kmix=w.shape
+    if torch.is_tensor(taus):
+        tt = taus.detach().to(device=w.device, dtype=w.dtype).view(1, -1).repeat(B, 1)
+    else:
+        tt = torch.as_tensor(taus, device=w.device, dtype=w.dtype).view(1, -1).repeat(B, 1)
+    Ktau=tt.shape[1]
     lo=(mu-8*s).min(dim=1,keepdim=True)[0].repeat(1,Ktau); hi=(mu+8*s).max(dim=1,keepdim=True)[0].repeat(1,Ktau)
     for _ in range(n_iter):
         md=(lo+hi)/2
@@ -556,14 +654,27 @@ def physics_loss_flex(case,x_real_raw,p0_hat,q0_hat,pg_hat,qg_hat,return_parts=F
     pccp=(((P[:,root_out].sum(dim=1,keepdim=True)-p0_hat)/p_scale_t)**2).mean(); pccq=(((Q[:,root_out].sum(dim=1,keepdim=True)-q0_hat)/q_scale_t)**2).mean()
     gp=(((p0_hat+pinj.sum(dim=1,keepdim=True))/p_scale_t)**2).mean(); gq=(((q0_hat+qinj.sum(dim=1,keepdim=True))/q_scale_t)**2).mean()
     v=((relu(case.vmin**2-V)**2)+(relu(V-case.vmax**2)**2)).mean(); fp=torch.tensor(case.fmax_p,device=x_real_raw.device).view(1,-1); fq=torch.tensor(case.fmax_q,device=x_real_raw.device).view(1,-1)
-    lp=(relu(P.abs()-fp)**2).mean(); lq=(relu(Q.abs()-fq)**2).mean(); pgmn=torch.tensor(case.pg_min,device=x_real_raw.device).view(1,-1); pgmx=torch.tensor(case.pg_max,device=x_real_raw.device).view(1,-1); qgmn=torch.tensor(case.qg_min,device=x_real_raw.device).view(1,-1); qgmx=torch.tensor(case.qg_max,device=x_real_raw.device).view(1,-1)
+    if case.line_limit_mode == "internal_only_no_pcc":
+        mask=torch.as_tensor(case.internal_branch_mask, device=x_real_raw.device, dtype=torch.bool)
+        P_lim=P[:,mask]; Q_lim=Q[:,mask]; fp_lim=fp[:,mask]; fq_lim=fq[:,mask]
+    else:
+        P_lim=P; Q_lim=Q; fp_lim=fp; fq_lim=fq
+    lp=(relu(P_lim.abs()-fp_lim)**2).mean(); lq=(relu(Q_lim.abs()-fq_lim)**2).mean(); pgmn=torch.tensor(case.pg_min,device=x_real_raw.device).view(1,-1); pgmx=torch.tensor(case.pg_max,device=x_real_raw.device).view(1,-1); qgmn=torch.tensor(case.qg_min,device=x_real_raw.device).view(1,-1); qgmx=torch.tensor(case.qg_max,device=x_real_raw.device).view(1,-1)
     lpg=((relu(pgmn-pg)**2)+(relu(pg-pgmx)**2)).mean(); lqg=((relu(qgmn-qg)**2)+(relu(qg-qgmx)**2)).mean(); pv=(relu(pr[:,torch.tensor(case.pv_buses,device=x_real_raw.device)]-torch.tensor(case.pv_pmax,device=x_real_raw.device).view(1,-1))**2).mean()
+    pcc_lim_loss = torch.tensor(0.0, device=x_real_raw.device, dtype=x_real_raw.dtype)
+    if case.use_explicit_pcc_limits:
+        pcc_lim_loss = (
+            torch.relu(torch.as_tensor(case.pcc_p_min, device=x_real_raw.device, dtype=x_real_raw.dtype) - p0_hat).pow(2).mean()
+            + torch.relu(p0_hat - torch.as_tensor(case.pcc_p_max, device=x_real_raw.device, dtype=x_real_raw.dtype)).pow(2).mean()
+            + torch.relu(torch.as_tensor(case.pcc_q_min, device=x_real_raw.device, dtype=x_real_raw.dtype) - q0_hat).pow(2).mean()
+            + torch.relu(q0_hat - torch.as_tensor(case.pcc_q_max, device=x_real_raw.device, dtype=x_real_raw.dtype)).pow(2).mean()
+        )
     kcl=[]
     for i in range(case.n_bus):
         if i==case.root: continue
         kcl.append((P[:,case.in_branches[i]].sum(dim=1,keepdim=True)-P[:,case.out_branches[i]].sum(dim=1,keepdim=True)+pinj[:,i:i+1]).pow(2))
         kcl.append((Q[:,case.in_branches[i]].sum(dim=1,keepdim=True)-Q[:,case.out_branches[i]].sum(dim=1,keepdim=True)+qinj[:,i:i+1]).pow(2))
-    lkcl=torch.cat(kcl,dim=1).mean(); loss=pccp+pccq+gp+gq+v+lp+lq+lpg+lqg+pv+0.1*lkcl
+    lkcl=torch.cat(kcl,dim=1).mean(); loss=pccp+pccq+gp+gq+v+lp+lq+lpg+lqg+pv+0.1*lkcl+pcc_lim_loss
     if return_parts: return loss,{"pcc_p":pccp.detach(),"pcc_q":pccq.detach(),"global_p":gp.detach(),"global_q":gq.detach(),"raw_pcc_p":raw_pcc_p.detach(),"raw_pcc_q":raw_pcc_q.detach(),"raw_global_p":raw_global_p.detach(),"raw_global_q":raw_global_q.detach(),"voltage":v.detach(),"line_p":lp.detach(),"line_q":lq.detach(),"pg":lpg.detach(),"qg":lqg.detach(),"pv":pv.detach(),"kcl":lkcl.detach()}
     return loss
 
@@ -1279,7 +1390,7 @@ def get_or_build_flex_dataset_cache(case):
     meta_now=build_dataset_cache_meta(case,THETA_LIST)
     exists=Path(DATASET_CACHE_NPZ).exists() and Path(DATASET_CACHE_PICKLE).exists() and Path(DATASET_CACHE_META).exists()
     if DATASET_CACHE_MODE=="load_only" and (not exists):
-        raise RuntimeError("data800 cache not found. Please set DATASET_CACHE_MODE=\"rebuild\" or \"auto\" for first run.")
+        raise FileNotFoundError("No no_pcc_branch_limit dataset cache found. Set DATASET_CACHE_MODE='rebuild' or BUILD_NEW_DATASET=True.")
     if DATASET_CACHE_MODE=="rebuild":
         exists=False
     if exists:
@@ -2039,12 +2150,30 @@ def main():
 
 # ===== v15 theta-independent experiment =====
 PRINT_TRAIN_PROGRESS = True
-LOG_EVERY_EPOCH = 1
+LOG_FIRST_N_EPOCHS = 5
+LOG_EVERY_EPOCH = 10
+LOG_LAST_N_EPOCHS = 3
 LOG_EVERY_N_BATCHES = 20
 PRINT_BATCH_PROGRESS = False
 PRINT_PROGRESS_FLUSH = True
 RUN_FULL_OPF_EVAL = False
 RUN_FLEX_DOMAIN_PLOTS = False
+RUN_P0_STYLE_EXTERNAL_EVAL = True
+P0_STYLE_EVAL_THETA_LIST = [2]
+P0_STYLE_SINGLE_SCENARIO_MC = 2500
+P0_STYLE_MULTI_SCENARIO_EVAL = False
+P0_STYLE_N_TEST_SCENARIOS = 20
+P0_STYLE_MULTI_SCENARIO_MC = 800
+P0_STYLE_EVAL_SEED = SEED_EVAL
+P0_STYLE_EXTERNAL_EVAL_DIR = TRAINING_RESULT_DIR
+
+def should_print_epoch(ep, epochs):
+    ep1 = ep + 1
+    return (
+        ep1 <= LOG_FIRST_N_EPOCHS
+        or ep1 % LOG_EVERY_EPOCH == 0
+        or ep1 > epochs - LOG_LAST_N_EPOCHS
+    )
 
 def flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list):
     theta = float(theta_list[theta_idx])
@@ -2122,12 +2251,16 @@ def evaluate_single_theta_model(net, norm, XMU_scen, YH_theta_scen, theta_idx, t
         pred_cdf = gmm_cdf((grid-hm)/(hs+1e-9), w, mu, sigma)
         arms.append(100*np.sqrt(np.mean((pred_cdf-emp_cdf)**2)))
         for q in errs:
-            errs[q].append(float((hm + hs * gmm_quantile(q, w, mu, sigma)) - np.quantile(ys, q)))
+            q_pred_norm = float(np.asarray(gmm_quantile(q, w, mu, sigma)).reshape(-1)[0])
+            q_pred_phys = hm + hs * q_pred_norm
+            q_emp_phys = float(np.quantile(ys, q))
+            errs[q].append(q_pred_phys - q_emp_phys)
         pred_mean = hm + hs * float(np.sum(w*mu))
         pred_std = hs * float(np.sqrt(max(0.0, np.sum(w*(sigma**2 + mu**2)) - (np.sum(w*mu)**2))))
         me.append(pred_mean - float(np.mean(ys))); se.append(pred_std - float(np.std(ys)))
         if payload is None: payload=(grid, emp_cdf, pred_cdf)
     if save_cdf_path and payload is not None:
+        Path(save_cdf_path).parent.mkdir(parents=True, exist_ok=True)
         grid, emp_cdf, pred_cdf = payload
         plt.figure(figsize=(7,5), dpi=180)
         plt.plot(grid, emp_cdf, 'k-', lw=2, label='Empirical CDF')
@@ -2137,6 +2270,7 @@ def evaluate_single_theta_model(net, norm, XMU_scen, YH_theta_scen, theta_idx, t
     return dict(theta_idx=theta_idx, theta=theta, alpha=alpha, beta=beta, cdf_arms=float(np.mean(arms)) if arms else np.nan, q05_error=float(np.mean(errs[0.05])) if errs[0.05] else np.nan, q25_error=float(np.mean(errs[0.25])) if errs[0.25] else np.nan, q50_error=float(np.mean(errs[0.50])) if errs[0.50] else np.nan, q75_error=float(np.mean(errs[0.75])) if errs[0.75] else np.nan, q95_error=float(np.mean(errs[0.95])) if errs[0.95] else np.nan, q50_rmse=float(np.sqrt(np.mean(np.square(errs[0.50])))) if errs[0.50] else np.nan, mean_error=float(np.mean(me)) if me else np.nan, std_error=float(np.mean(se)) if se else np.nan, n_eval_scenarios=int(len(arms)))
 
 def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list):
+    Path(TRAINING_RESULT_DIR).mkdir(parents=True, exist_ok=True)
     d = flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list)
     rng=np.random.default_rng(SEED_TRAIN); n_scen=XMU.shape[0]; mc=YH.shape[1]
     perm=rng.permutation(n_scen); n_val=max(1,int(round(0.1*n_scen))); va=perm[-n_val:]; tr=perm[:-n_val]
@@ -2151,7 +2285,7 @@ def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx
     net=BayesSingleThetaGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE)
     opt=torch.optim.Adam(net.parameters(),lr=LR)
     print('[v15-theta-train-start]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'theta = {d["theta"]}', flush=True); print(f'alpha = {d["alpha"]}', flush=True); print(f'beta = {d["beta"]}', flush=True); print(f'epochs = {EPOCHS}', flush=True); print(f'train samples = {xmu_n.shape[0]}', flush=True); print(f'val samples = {int(va_mask.sum())}', flush=True); print(f'batch size = {BATCH_SIZE}', flush=True); print(f'device = {DEVICE}', flush=True); print(f'DATASET_CACHE_MODE = {DATASET_CACHE_MODE}', flush=True); print('training target = h_theta', flush=True); print('v8-style realization-conditioned physics = True', flush=True)
-    rows=[]; n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; t0=datetime.now()
+    rows=[]; n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; t0=datetime.now(); best_cdf=np.inf; best_ep=0; last_stat=None
     for ep in range(EPOCHS):
         ep0=datetime.now(); p=np.random.default_rng(SEED_TRAIN+ep).permutation(n); beta_kl=min(1.0,(ep+1)/max(1,KL_WARMUP_EPOCHS))*BETA_KL_MAX
         stat={k:0.0 for k in ['total','nll','boundary','dispatch','t','phys','support','kl']}
@@ -2176,10 +2310,20 @@ def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx
         for k in stat: stat[k]/=max(1,nb)
         val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=(f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png" if ep==EPOCHS-1 else None))
         elapsed=(datetime.now()-t0).total_seconds(); ep_sec=(datetime.now()-ep0).total_seconds(); eta=(EPOCHS-ep-1)*ep_sec
-        print(f"[v15-theta-train] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} stage=A lr={opt.param_groups[0]['lr']:.6g}", flush=True)
-        print(f"  loss: total={stat['total']:.6f} nll={stat['nll']:.6f} boundary={stat['boundary']:.6f} dispatch={stat['dispatch']:.6f} t={stat['t']:.6f} phys={stat['phys']:.6f} support={stat['support']:.6f} kl={stat['kl']:.6f}", flush=True)
-        print(f"  val: cdf_arms={val['cdf_arms']:.6f} q50_rmse={val['q50_rmse']:.6f} mean_error={val['mean_error']:.6f} std_error={val['std_error']:.6f}", flush=True)
-        rows.append({'epoch':ep+1,'stage':'A','lr':opt.param_groups[0]['lr'],'epoch_time_sec':ep_sec,'elapsed_sec':elapsed,'eta_sec':eta,'total_loss':stat['total'],'nll_loss':stat['nll'],'boundary_sup_loss':stat['boundary'],'dispatch_sup_loss':stat['dispatch'],'t_sup_loss':stat['t'],'phys_loss':stat['phys'],'support_consist_loss':stat['support'],'kl_loss':stat['kl'],'val_cdf_arms':val['cdf_arms'],'val_q50_rmse':val['q50_rmse'],'val_mean_error':val['mean_error'],'val_std_error':val['std_error']})
+        if np.isfinite(val['cdf_arms']) and val['cdf_arms'] < best_cdf:
+            best_cdf = float(val['cdf_arms']); best_ep = ep+1
+        warn_flag = (not np.isfinite(stat['total'])) or (not np.isfinite(val['cdf_arms']))
+        if should_print_epoch(ep, EPOCHS) or warn_flag:
+            pct = 100.0 * (ep+1) / max(1, EPOCHS)
+            bar_n = 20; fill = int(round(bar_n * (ep+1) / max(1, EPOCHS)))
+            bar = '[' + '#' * fill + '-' * (bar_n - fill) + ']'
+            if warn_flag:
+                print(f"[v15-theta-warning] theta_idx={theta_idx:02d} epoch={ep+1} non-finite metric detected", flush=True)
+            print(f"[v15-theta-train] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} {pct:5.1f}% {bar} stage=A lr={opt.param_groups[0]['lr']:.6g} beta_kl={beta_kl:.6f}", flush=True)
+            print(f"  loss: total={stat['total']:.6f} nll={stat['nll']:.6f} boundary={stat['boundary']:.6f} dispatch={stat['dispatch']:.6f} t={stat['t']:.6f} phys={stat['phys']:.6f} support={stat['support']:.6f} kl_raw={stat['kl']:.6f} kl_weighted={(beta_kl*stat['kl']):.6f}", flush=True)
+            print(f"  val: cdf_arms={val['cdf_arms']:.6f} q50_rmse={val['q50_rmse']:.6f} mean_error={val['mean_error']:.6f} std_error={val['std_error']:.6f} best_cdf_arms={best_cdf:.6f} best_epoch={best_ep}", flush=True)
+        rows.append({'epoch':ep+1,'stage':'A','lr':opt.param_groups[0]['lr'],'epoch_time_sec':ep_sec,'elapsed_sec':elapsed,'eta_sec':eta,'total_loss':stat['total'],'nll_loss':stat['nll'],'boundary_sup_loss':stat['boundary'],'dispatch_sup_loss':stat['dispatch'],'t_sup_loss':stat['t'],'phys_loss':stat['phys'],'support_consist_loss':stat['support'],'kl_loss':stat['kl'],'beta_kl':beta_kl,'kl_raw_loss':stat['kl'],'kl_weighted_loss':beta_kl*stat['kl'],'best_val_cdf_arms_so_far':best_cdf,'best_epoch_so_far':best_ep,'val_cdf_arms':val['cdf_arms'],'val_q50_rmse':val['q50_rmse'],'val_mean_error':val['mean_error'],'val_std_error':val['std_error']})
+        last_stat = (stat.copy(), beta_kl)
     Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True)
     tag=f"theta_independent_theta{theta_idx:02d}"
     model_path=f"{TRAINING_RESULT_DIR}/{tag}_model.pt"; norm_path=f"{TRAINING_RESULT_DIR}/{tag}_norm.pkl"; cfg_path=f"{TRAINING_RESULT_DIR}/{tag}_config.json"; log_path=f"{TRAINING_RESULT_DIR}/{tag}_training_log.csv"; val_path=f"{TRAINING_RESULT_DIR}/{tag}_val_metrics.csv"
@@ -2189,7 +2333,9 @@ def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx
     pd.DataFrame(rows).to_csv(log_path,index=False)
     final_val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png")
     pd.DataFrame([final_val]).to_csv(val_path,index=False)
-    print('[v15-theta-train-finished]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'total epochs = {EPOCHS}', flush=True); print(f'total training time = {(datetime.now()-t0).total_seconds():.2f}', flush=True); print(f'saved model path = {model_path}', flush=True); print(f'saved norm path = {norm_path}', flush=True); print(f'saved config path = {cfg_path}', flush=True); print(f'saved training log path = {log_path}', flush=True); print(f'saved val metrics path = {val_path}', flush=True)
+    final_stat, final_beta = last_stat if last_stat is not None else ({'total':np.nan,'nll':np.nan,'phys':np.nan,'kl':np.nan}, np.nan)
+    cdf_path = f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png"
+    print('[v15-theta-train-finished]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'total epochs = {EPOCHS}', flush=True); print(f'best val cdf_arms = {best_cdf}', flush=True); print(f'best epoch = {best_ep}', flush=True); print(f'final val cdf_arms = {final_val["cdf_arms"]}', flush=True); print(f'final q50_rmse = {final_val["q50_rmse"]}', flush=True); print(f'final total loss = {final_stat["total"]}', flush=True); print(f'final nll loss = {final_stat["nll"]}', flush=True); print(f'final phys loss = {final_stat["phys"]}', flush=True); print(f'final raw kl loss = {final_stat["kl"]}', flush=True); print(f'final weighted kl loss = {final_beta*final_stat["kl"]}', flush=True); print(f'saved model path = {model_path}', flush=True); print(f'saved norm path = {norm_path}', flush=True); print(f'saved config path = {cfg_path}', flush=True); print(f'saved training log path = {log_path}', flush=True); print(f'saved val metrics path = {val_path}', flush=True); print(f'saved cdf path = {cdf_path}', flush=True)
     return final_val
 
 def train_theta_independent_models(case, XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, theta_list):
@@ -2217,7 +2363,9 @@ def combine_theta_independent_flex_domain(case, XMU, YH, theta_list):
         with torch.no_grad(): _,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
         w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1)
         hm,hs=float(norm['h_mean'][0,0]),float(norm['h_std'][0,0])
-        for q in hq: hq[q].append(hm+hs*gmm_quantile(q,w,mu,sigma))
+        for q in hq:
+            q_pred_norm = float(np.asarray(gmm_quantile(q, w, mu, sigma)).reshape(-1)[0])
+            hq[q].append(float(hm + hs * q_pred_norm))
     polys={q:support_values_to_polygon(theta_list,np.array(v,dtype=float)) for q,v in hq.items()}
     for q,p in polys.items():
         if p is None or len(p)<3: print(f'[v15-combine] warning: invalid polygon q={q}', flush=True)
@@ -2235,16 +2383,139 @@ def combine_theta_independent_flex_domain(case, XMU, YH, theta_list):
                 x,y=close(p); plt.plot(x,y,'--',color=c,lw=1.5,label=f'MC q{int(q*100):02d}')
     plt.title('theta-independent v8-style support BPINN')
     plt.axis('equal'); plt.grid(alpha=0.2); plt.legend(); plt.tight_layout()
-    out=f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"; plt.savefig(out,dpi=240); plt.close()
+    out=f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out,dpi=240); plt.close()
     return out
+
+
+
+def draw_theta_external_test_scenario(case, seed):
+    rng = np.random.default_rng(seed)
+    return sample_scenario_means(case, rng)
+
+def build_external_mc_labels_for_theta(case, theta_idx, theta_list, pd_mu, qd_mu, pr_mu, qr_mu, mc_eval, seed):
+    theta=float(theta_list[theta_idx]); alpha=float(np.cos(theta)); beta=float(np.sin(theta))
+    rng=np.random.default_rng(seed)
+    h_list=[]; p0_list=[]; q0_list=[]; infeasible_count=0
+    t0=datetime.now(); report_every=250 if mc_eval>=1000 else 100
+    for m in range(mc_eval):
+        pd = pd_mu.copy(); pr = pr_mu.copy()
+        std_pd = 0.10 * np.maximum(pd_mu, 1e-3)
+        std_pr = 0.12 * np.maximum(pr_mu, 1e-3)
+        for i in range(case.n_bus):
+            if pd_mu[i] > 1e-9:
+                pd[i] = sample_trunc_normal(pd_mu[i], std_pd[i], 0.0, None)
+        for k, b in enumerate(case.pv_buses):
+            pr[b] = sample_trunc_normal(
+                pr_mu[b],
+                std_pr[b],
+                0.0,
+                float(case.pv_pmax[k])
+            )
+        qd = qd_mu * (pd / np.maximum(pd_mu, 1e-6))
+        qr = pr * np.tan(np.arccos(case.pv_pf))
+        sol = solve_flex_support_gurobi_33bus(case,pd,qd,pr,qr,alpha,beta,return_detail=True,stabilize_dispatch=STABILIZE_OPF_DISPATCH)
+        if sol.get('ok',False):
+            h_list.append(float(sol['h'])); p0_list.append(float(sol['P0'])); q0_list.append(float(sol['Q0']))
+        else:
+            infeasible_count += 1
+        if (m+1) % report_every == 0 or (m+1)==mc_eval:
+            elapsed=(datetime.now()-t0).total_seconds(); eta=(mc_eval-m-1)*(elapsed/max(1,m+1))
+            print(f"[p0-style-external-mc] theta_idx={theta_idx:02d} {m+1}/{mc_eval} success={len(h_list)} infeasible={infeasible_count} elapsed={elapsed:.1f}s eta={eta:.1f}s", flush=True)
+    if len(h_list)==0:
+        raise RuntimeError(f"[p0-style-external] all MC OPF samples infeasible for theta_idx={theta_idx}")
+    return {'theta_idx':theta_idx,'theta':theta,'alpha':alpha,'beta':beta,'x_mu':make_feature_vector(case,pd_mu,pr_mu),'h_mc':np.array(h_list,dtype=float),'p0_mc':np.array(p0_list,dtype=float),'q0_mc':np.array(q0_list,dtype=float),'n_success':len(h_list),'n_infeasible':infeasible_count,'mc_eval':mc_eval}
+
+def load_theta_independent_model_for_eval(case, theta_idx):
+    model_path=Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_model.pt")
+    norm_path=Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_norm.pkl")
+    config_path=Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_config.json")
+    if (not model_path.exists()) or (not norm_path.exists()):
+        print(f"[p0-style-external-warning] missing model or norm for theta_idx={theta_idx}: {model_path} / {norm_path}", flush=True)
+        return None
+    with open(norm_path,'rb') as f: norm=pickle.load(f)
+    in_dim = int(np.asarray(norm['x_mu_mean']).shape[1])
+    net=BayesSingleThetaGMM2SupportNet(in_dim,case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE)
+    net.load_state_dict(torch.load(model_path,map_location=DEVICE)); net.eval()
+    return net,norm,{'model_path':str(model_path),'norm_path':str(norm_path),'config_path':str(config_path)}
+
+def _external_metrics_from_mc_and_model(case, theta_idx, theta_list, net, norm, h_mc, x_mu):
+    theta=float(theta_list[theta_idx]); alpha=float(np.cos(theta)); beta=float(np.sin(theta))
+    hm=float(norm['h_mean'][0,0]); hs=float(norm['h_std'][0,0])
+    margin=max(0.1,0.1*(float(np.max(h_mc))-float(np.min(h_mc))+1e-6))
+    z_grid=np.linspace(float(np.min(h_mc))-margin,float(np.max(h_mc))+margin,600)
+    cdf_mc=np.searchsorted(np.sort(h_mc),z_grid,side='right')/max(1,len(h_mc))
+    x_n=(x_mu.reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std']
+    xt=torch.tensor(x_n,dtype=torch.float32,device=DEVICE)
+    with torch.no_grad(): _,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
+    w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1)
+    z_norm=(z_grid-hm)/(hs+1e-9); cdf_pred=gmm_cdf(z_norm,w,mu,sigma)
+    arms=float(np.sqrt(np.mean((cdf_pred-cdf_mc)**2))*100.0)
+    q_err={}
+    for q in [0.05,0.25,0.50,0.75,0.95]:
+        qn=float(np.asarray(gmm_quantile(q,w,mu,sigma)).reshape(-1)[0]); qp=hm+hs*qn; qe=float(np.quantile(h_mc,q)); q_err[q]=float(qp-qe)
+    return {'theta_idx':theta_idx,'theta':theta,'alpha':alpha,'beta':beta,'cdf_arms':arms,'q05_error':q_err[0.05],'q25_error':q_err[0.25],'q50_error':q_err[0.50],'q75_error':q_err[0.75],'q95_error':q_err[0.95],'q50_rmse':abs(q_err[0.50]),'h_mc_min':float(np.min(h_mc)),'h_mc_max':float(np.max(h_mc)),'h_mc_mean':float(np.mean(h_mc)),'h_mc_std':float(np.std(h_mc)),'z_grid':z_grid,'cdf_mc':cdf_mc,'cdf_pred':cdf_pred}
+
+def eval_and_plot_single_theta_p0_style_external(case, theta_idx, theta_list, mc_eval=P0_STYLE_SINGLE_SCENARIO_MC, seed=P0_STYLE_EVAL_SEED, save_plot=True):
+    loaded=load_theta_independent_model_for_eval(case,theta_idx)
+    if loaded is None: return None
+    net,norm,paths=loaded
+    pd_mu,qd_mu,pr_mu,qr_mu=draw_theta_external_test_scenario(case,seed)
+    theta=float(theta_list[theta_idx]); alpha=float(np.cos(theta)); beta=float(np.sin(theta))
+    print('[p0-style-external-start]', flush=True)
+    print(f'theta_idx = {theta_idx}', flush=True); print(f'theta = {theta}', flush=True); print(f'alpha = {alpha}', flush=True); print(f'beta = {beta}', flush=True)
+    print(f'mc_eval = {mc_eval}', flush=True); print(f'seed = {seed}', flush=True); print('source = newly sampled external scenario, not data800 validation', flush=True); print(f"using model path = {paths['model_path']}", flush=True)
+    ext=build_external_mc_labels_for_theta(case,theta_idx,theta_list,pd_mu,qd_mu,pr_mu,qr_mu,mc_eval,seed)
+    met=_external_metrics_from_mc_and_model(case,theta_idx,theta_list,net,norm,ext['h_mc'],ext['x_mu'])
+    plot_path=''
+    if save_plot:
+        plot_path=f"{P0_STYLE_EXTERNAL_EVAL_DIR}/CDF_theta_independent_theta{theta_idx:02d}_p0style_external_mc{mc_eval}_v15.png"
+        Path(plot_path).parent.mkdir(parents=True,exist_ok=True)
+        plt.figure(figsize=(7,5),dpi=200)
+        plt.plot(met['z_grid'],met['cdf_mc'],'k-',lw=2,label='External MC-OPF empirical CDF')
+        plt.plot(met['z_grid'],met['cdf_pred'],'r--',lw=2,label='Predicted GMM CDF')
+        plt.title(f"theta_idx={theta_idx:02d}, theta={theta:.4f}, external mc_eval={mc_eval}, ARMS={met['cdf_arms']:.3f}")
+        plt.grid(alpha=0.2); plt.legend(); plt.tight_layout(); plt.savefig(plot_path,dpi=220); plt.close()
+    out={k:met[k] for k in ['theta_idx','theta','alpha','beta','cdf_arms','q05_error','q25_error','q50_error','q75_error','q95_error','q50_rmse','h_mc_min','h_mc_max','h_mc_mean','h_mc_std']}
+    out.update({'eval_type':'p0_style_external_single_scenario','mc_eval':mc_eval,'n_success':ext['n_success'],'n_infeasible':ext['n_infeasible'],'plot_path':plot_path})
+    metrics_path=f"{P0_STYLE_EXTERNAL_EVAL_DIR}/theta_independent_theta{theta_idx:02d}_p0style_external_single_metrics_v15.csv"
+    pd.DataFrame([out]).to_csv(metrics_path,index=False)
+    print('[p0-style-external-finished]', flush=True)
+    print(f"theta_idx = {theta_idx}", flush=True); print(f"mc_eval = {mc_eval}", flush=True); print(f"n_success = {ext['n_success']}", flush=True); print(f"n_infeasible = {ext['n_infeasible']}", flush=True)
+    print(f"cdf_arms = {out['cdf_arms']}", flush=True); print(f"q50_error = {out['q50_error']}", flush=True); print(f"h_mc_mean = {out['h_mc_mean']}", flush=True); print(f"h_mc_std = {out['h_mc_std']}", flush=True)
+    print(f"plot path = {plot_path}", flush=True); print(f"metrics path = {metrics_path}", flush=True)
+    return out
+
+def eval_multiple_external_test_scenarios_single_theta(case, theta_idx, theta_list, n_scenarios=P0_STYLE_N_TEST_SCENARIOS, mc_eval_multi=P0_STYLE_MULTI_SCENARIO_MC, seed=P0_STYLE_EVAL_SEED):
+    loaded=load_theta_independent_model_for_eval(case,theta_idx)
+    if loaded is None: return None
+    net,norm,paths=loaded
+    rows=[]; total_succ=0; total_inf=0
+    for s in range(n_scenarios):
+        seed_s=seed+1000+s
+        pd_mu,qd_mu,pr_mu,qr_mu=draw_theta_external_test_scenario(case,seed_s)
+        ext=build_external_mc_labels_for_theta(case,theta_idx,theta_list,pd_mu,qd_mu,pr_mu,qr_mu,mc_eval_multi,seed_s)
+        met=_external_metrics_from_mc_and_model(case,theta_idx,theta_list,net,norm,ext['h_mc'],ext['x_mu'])
+        row={'scenario_idx':s,'seed':seed_s,'n_success':ext['n_success'],'n_infeasible':ext['n_infeasible'],**{k:met[k] for k in ['cdf_arms','q05_error','q25_error','q50_error','q75_error','q95_error','q50_rmse']}}
+        rows.append(row); total_succ+=ext['n_success']; total_inf+=ext['n_infeasible']
+        print(f"[p0-style-external-multi] theta_idx={theta_idx:02d} scenario {s+1:02d}/{n_scenarios} arms={met['cdf_arms']:.4f} n_success={ext['n_success']} n_infeasible={ext['n_infeasible']}", flush=True)
+    by_path=f"{P0_STYLE_EXTERNAL_EVAL_DIR}/theta_independent_theta{theta_idx:02d}_p0style_external_multiscen_by_scenario_v15.csv"
+    pd.DataFrame(rows).to_csv(by_path,index=False)
+    arr=np.array([r['cdf_arms'] for r in rows],dtype=float); q50abs=np.array([abs(r['q50_error']) for r in rows],dtype=float)
+    summary={'theta_idx':theta_idx,'n_scenarios':n_scenarios,'mc_eval_multi':mc_eval_multi,'mean_arms':float(np.mean(arr)),'median_arms':float(np.median(arr)),'max_arms':float(np.max(arr)),'q90_arms':float(np.quantile(arr,0.9)),'mean_q50_abs_error':float(np.mean(q50abs)),'max_q50_abs_error':float(np.max(q50abs)),'total_success':int(total_succ),'total_infeasible':int(total_inf)}
+    sum_path=f"{P0_STYLE_EXTERNAL_EVAL_DIR}/theta_independent_theta{theta_idx:02d}_p0style_external_multiscen_summary_v15.csv"
+    pd.DataFrame([summary]).to_csv(sum_path,index=False)
+    return summary
 
 def write_visualization_manifest_theta_independent_v15():
     Path(TRAINING_RESULT_DIR).mkdir(parents=True, exist_ok=True)
-    candidates=[f"{TRAINING_RESULT_DIR}/theta_independent_theta02_training_log.csv",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_val_metrics.csv",f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta02_v15.png",f"{TRAINING_RESULT_DIR}/theta_independent_all_theta_metrics_v15.csv",f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"]
+    candidates=[f"{TRAINING_RESULT_DIR}/theta_independent_theta02_training_log.csv",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_val_metrics.csv",f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta02_v15.png",f"{TRAINING_RESULT_DIR}/theta_independent_all_theta_metrics_v15.csv",f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_p0style_external_single_metrics_v15.csv",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_p0style_external_multiscen_by_scenario_v15.csv",f"{TRAINING_RESULT_DIR}/theta_independent_theta02_p0style_external_multiscen_summary_v15.csv"]
+    candidates += [str(p) for p in Path(TRAINING_RESULT_DIR).glob('CDF_theta_independent_theta*_p0style_external_mc*_v15.png')]
     rows=[[Path(f).name] for f in candidates if Path(f).exists()]
     pd.DataFrame(rows,columns=['file']).to_csv(f"{TRAINING_RESULT_DIR}/visualization_manifest_theta_independent_v15.csv",index=False)
 
-def main_theta_independent():
+def main_theta_independent_v5():
     print('[v15-theta-independent] start', flush=True)
     case = build_ieee33_case()
     XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, active_records, all_names = get_or_build_flex_dataset_cache(case)
@@ -2252,8 +2523,973 @@ def main_theta_independent():
         train_theta_independent_models(case,XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,THETA_LIST)
     if RUN_COMBINE_THETA_FLEX_DOMAIN or THETA_TRAIN_MODE == 'all':
         combine_theta_independent_flex_domain(case,XMU,YH,THETA_LIST)
+    if RUN_P0_STYLE_EXTERNAL_EVAL:
+        for theta_idx in P0_STYLE_EVAL_THETA_LIST:
+            try:
+                eval_and_plot_single_theta_p0_style_external(case,theta_idx,THETA_LIST,mc_eval=P0_STYLE_SINGLE_SCENARIO_MC,seed=P0_STYLE_EVAL_SEED,save_plot=True)
+                if P0_STYLE_MULTI_SCENARIO_EVAL:
+                    eval_multiple_external_test_scenarios_single_theta(case,theta_idx,THETA_LIST,n_scenarios=P0_STYLE_N_TEST_SCENARIOS,mc_eval_multi=P0_STYLE_MULTI_SCENARIO_MC,seed=P0_STYLE_EVAL_SEED)
+            except Exception as e:
+                print(f"[p0-style-external-warning] theta_idx={theta_idx} skipped due to error: {e}", flush=True)
     write_visualization_manifest_theta_independent_v15()
     print('[v15-theta-independent] done', flush=True)
 
-if __name__ == "__main__":
-    main_theta_independent()
+
+
+# ===== v5 v7-style theta-independent branch =====
+import time
+V7STYLE_EXPERIMENT = True
+V7STYLE_RUN_TAG = "v5_theta_independent_v7style_worst_theta"
+USE_V7STYLE_QUANTILE_PHYSICS = True
+FIXED_QUANTILE_TAUS = [0.05, 0.25, 0.50, 0.75, 0.95]
+USE_RANDOM_PHYS_TAUS = True
+N_RANDOM_PHYS_TAUS = 4
+RANDOM_TAU_LOW = 0.02
+RANDOM_TAU_HIGH = 0.98
+TAIL_WEIGHTED_PHYS = False
+DETACH_QUANTILE_Z = False
+N_GMM_COMPONENTS_V7STYLE = 2
+EVAL_POSTERIOR_SAMPLES = 100
+BAND_METHOD = "percentile"
+BAND_LO = 0.05
+BAND_HI = 0.95
+MEASURE_TRAIN_TIME = True
+MEASURE_PREDICT_TIME = True
+PREDICT_TIMING_REPEAT = 1000
+RUN_COMBINE_THETA_FLEX_DOMAIN = False
+P0_STYLE_EVAL_THETA_LIST = DEBUG_THETA_LIST
+
+COMPARISON_MODE = True
+RUN_COMPARE_THETA02_V7_VS_V8 = True
+RUN_COMPARE_THETA06_MULTI_SCENARIO = True
+COMPARE_THETA02_SEED = 1
+COMPARE_THETA02_MC = 2500
+COMPARE_THETA06_SEEDS = [1,2,3,4,5]
+COMPARE_THETA06_MC = 800
+TRAIN_V7_MODEL_IF_MISSING = True
+SKIP_TRAIN_IF_MODEL_EXISTS = True
+V7STYLE_RESULT_DIR = "training_results_theta_independent_v7style"
+V8STYLE_RESULT_DIR = "training_results_theta_independent"
+COMPARISON_RESULT_DIR = "training_results_theta_independent_comparison"
+V7_MODEL_TEMPLATE = "theta_independent_theta{theta_idx:02d}_v7style_model.pt"
+V7_NORM_TEMPLATE = "theta_independent_theta{theta_idx:02d}_v7style_norm.pkl"
+V7_CONFIG_TEMPLATE = "theta_independent_theta{theta_idx:02d}_v7style_config.json"
+V8_MODEL_TEMPLATE = "theta_independent_theta{theta_idx:02d}_model.pt"
+V8_NORM_TEMPLATE = "theta_independent_theta{theta_idx:02d}_norm.pkl"
+V8_CONFIG_TEMPLATE = "theta_independent_theta{theta_idx:02d}_config.json"
+
+
+def flatten_single_theta_dataset_v7style(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list):
+    d=flatten_single_theta_dataset(XMU,XREAL,YH,YP0,YQ0,YPG,YQG,theta_idx,theta_list)
+    N,M=YH.shape[0],YH.shape[1]
+    d.update({'XMU_scen':XMU,'YH_theta_scen':YH[:,:,theta_idx],'YP0_theta_scen':YP0[:,:,theta_idx],'YQ0_theta_scen':YQ0[:,:,theta_idx],'YT_theta_scen':(-d['beta']*YP0[:,:,theta_idx]+d['alpha']*YQ0[:,:,theta_idx]),'YPG_theta_scen':YPG[:,:,theta_idx,:],'YQG_theta_scen':YQG[:,:,theta_idx,:]})
+    return d
+
+class BayesSingleThetaV7StyleGMM2SupportNet(nn.Module):
+    def __init__(self,in_dim,case,hidden=160,depth=3,prior_sigma=1.0,init_rho=-5.0):
+        super().__init__(); self.n_gen=len(case.gen_buses); self.layers=nn.ModuleList(); d=in_dim
+        for _ in range(depth): self.layers.append(BayesLinear(d,hidden,prior_sigma=prior_sigma,init_rho=init_rho)); d=hidden
+        self.gmm_out=BayesLinear(hidden,6,prior_sigma=prior_sigma,init_rho=init_rho); self.rec_out=BayesLinear(hidden+1,1+2*self.n_gen,prior_sigma=prior_sigma,init_rho=init_rho); self.act=nn.ReLU()
+        self.register_buffer('pg_min_t',torch.tensor(case.pg_min,dtype=torch.float32).view(1,-1)); self.register_buffer('pg_max_t',torch.tensor(case.pg_max,dtype=torch.float32).view(1,-1)); self.register_buffer('qg_min_t',torch.tensor(case.qg_min,dtype=torch.float32).view(1,-1)); self.register_buffer('qg_max_t',torch.tensor(case.qg_max,dtype=torch.float32).view(1,-1))
+    def encode(self,x_mu_norm,sample=True):
+        h=x_mu_norm
+        for l in self.layers: h=self.act(l(h,sample=sample))
+        return h
+    def gmm_head(self,h,sample=True):
+        out=self.gmm_out(h,sample=sample); w=torch.softmax(out[:,:2],dim=1); mu=torch.cat([out[:,2:3],out[:,4:5]],dim=1); sigma=torch.cat([torch.nn.functional.softplus(out[:,3:4])+1e-3,torch.nn.functional.softplus(out[:,5:6])+1e-3],dim=1); return w,mu,sigma
+    def forward_gmm_single(self,x_mu_norm,sample=True):
+        h=self.encode(x_mu_norm,sample=sample); w,mu,sigma=self.gmm_head(h,sample=sample); return h,w,mu,sigma
+    def recover_dispatch_from_h(self,h_feature,h_label,h_mean,h_std,t_mean,t_std,sample=True):
+        h_norm=(h_label-h_mean)/(h_std+1e-9); out=self.rec_out(torch.cat([h_feature,h_norm],dim=1),sample=sample); t_norm=torch.tanh(out[:,0:1]); pg_raw=out[:,1:1+self.n_gen]; qg_raw=out[:,1+self.n_gen:1+2*self.n_gen]
+        t=t_mean+t_std*t_norm; pg=self.pg_min_t+torch.sigmoid(pg_raw)*(self.pg_max_t-self.pg_min_t); qg=self.qg_min_t+torch.sigmoid(qg_raw)*(self.qg_max_t-self.qg_min_t); return t,pg,qg
+    def kl_divergence(self): return sum(l.kl_divergence() for l in self.layers)+self.gmm_out.kl_divergence()+self.rec_out.kl_divergence()
+
+def make_v7style_physics_taus(training,device,dtype):
+    taus=list(FIXED_QUANTILE_TAUS)
+    if training and USE_RANDOM_PHYS_TAUS:
+        rng=np.random.default_rng(); taus += rng.uniform(RANDOM_TAU_LOW,RANDOM_TAU_HIGH,size=N_RANDOM_PHYS_TAUS).tolist()
+    taus=np.array(sorted(taus),dtype=float)
+    return torch.tensor(taus,dtype=dtype,device=device)
+
+def physics_loss_flex_quantile_v7style(case,x_mu_raw,h_quantiles,t_quantiles,pg_quantiles,qg_quantiles,alpha,beta,tau_weights=None,return_parts=False):
+    B,K=h_quantiles.shape; h=h_quantiles.reshape(-1,1); t=t_quantiles.reshape(-1,1); p0=alpha*h-beta*t; q0=beta*h+alpha*t
+    pg=pg_quantiles.reshape(B*K,-1); qg=qg_quantiles.reshape(B*K,-1); xrep=x_mu_raw.repeat_interleave(K,dim=0)
+    return physics_loss_flex(case,xrep,p0,q0,pg,qg)
+
+def train_single_theta_v7style_model(case,XMU,XREAL,YH,YP0,YQ0,YPG,YQG,theta_idx,theta_list):
+    Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True); d=flatten_single_theta_dataset_v7style(XMU,XREAL,YH,YP0,YQ0,YPG,YQG,theta_idx,theta_list)
+    rng=np.random.default_rng(SEED_TRAIN); n_scen=XMU.shape[0]; mc=YH.shape[1]; perm=rng.permutation(n_scen); n_val=max(1,int(0.1*n_scen)); va=perm[-n_val:]; tr=perm[:-n_val]; sf=np.repeat(np.arange(n_scen),mc); trm=np.isin(sf,tr); vam=np.isin(sf,va)
+    xmu_tr=d['xmu_flat'][trm]; yh_tr=d['yh_flat'][trm]; yt_tr=d['yt_flat'][trm]; ypg_tr=d['ypg_flat'][trm]; yqg_tr=d['yqg_flat'][trm]
+    norm={'x_mu_mean':xmu_tr.mean(0,keepdims=True),'x_mu_std':xmu_tr.std(0,keepdims=True)+1e-9,'h_mean':np.array([[yh_tr.mean()]]),'h_std':np.array([[yh_tr.std()+1e-9]]),'t_mean':np.array([[yt_tr.mean()]]),'t_std':np.array([[yt_tr.std()+1e-9]]),'alpha':d['alpha'],'beta':d['beta'],'theta':d['theta'],'theta_idx':theta_idx}
+    t=lambda a: torch.tensor(a,dtype=torch.float32,device=DEVICE)
+    xmu_n=t((xmu_tr-norm['x_mu_mean'])/norm['x_mu_std']); xmu_raw=t(xmu_tr); yh=t(yh_tr); yt=t(yt_tr); ypg=t(ypg_tr); yqg=t(yqg_tr); hm,hs,tm,ts=t(norm['h_mean']),t(norm['h_std']),t(norm['t_mean']),t(norm['t_std'])
+    net=BayesSingleThetaV7StyleGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); opt=torch.optim.Adam(net.parameters(),lr=LR)
+    n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; rows=[]; et=[]; train_start=time.perf_counter()
+    for ep in range(EPOCHS):
+      epst=time.perf_counter(); p=np.random.default_rng(SEED_TRAIN+ep).permutation(n); beta_kl=min(1.0,(ep+1)/max(1,KL_WARMUP_EPOCHS))*BETA_KL_MAX; st={k:0.0 for k in ['total','nll','dispatch','t','phys','kl']}
+      for b in range(nb):
+        ii=p[b*BATCH_SIZE:min((b+1)*BATCH_SIZE,n)]; hf,w,mu,sigma=net.forward_gmm_single(xmu_n[ii],sample=True); hnorm=(yh[ii]-hm)/(hs+1e-9); nll=(-gmm_log_prob(hnorm,w,mu,sigma)).mean(); t_hat,pg_hat,qg_hat=net.recover_dispatch_from_h(hf,yh[ii],hm,hs,tm,ts,sample=True)
+        t_sup=((t_hat-yt[ii])**2).mean(); disp=((pg_hat-ypg[ii])**2).mean()+((qg_hat-yqg[ii])**2).mean(); taus=make_v7style_physics_taus(True,xmu_n.device,xmu_n.dtype); hq_n=gmm_quantile_torch(w,mu,sigma,taus); hq=hm+hs*hq_n
+        tq=[]; pgq=[]; qgq=[]
+        for k in range(taus.numel()):
+          tk,pgk,qgk=net.recover_dispatch_from_h(hf,hq[:,k:k+1],hm,hs,tm,ts,sample=True); tq.append(tk); pgq.append(pgk); qgq.append(qgk)
+        tq=torch.cat(tq,dim=1); pgq=torch.stack(pgq,dim=1); qgq=torch.stack(qgq,dim=1)
+        phys=physics_loss_flex_quantile_v7style(case,xmu_raw[ii],hq,tq,pgq,qgq,d['alpha'],d['beta']); kl=net.kl_divergence()/max(1,n); loss=nll+LAM_T_SUP*t_sup+LAM_DISPATCH_SUP*disp+LAM_PHYS_FLEX*phys+beta_kl*kl
+        opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(net.parameters(),5.0); opt.step()
+        for k,v in zip(st.keys(),[loss,nll,disp,t_sup,phys,kl]): st[k]+=float(v.detach().cpu())
+      for k in st: st[k]/=max(1,nb)
+      ep_time=time.perf_counter()-epst; et.append(ep_time); cum=time.perf_counter()-train_start
+      rows.append({'epoch':ep+1,'total_loss':st['total'],'nll_loss':st['nll'],'dispatch_sup_loss':st['dispatch'],'t_sup_loss':st['t'],'phys_loss':st['phys'],'kl_loss':st['kl'],'epoch_time_sec':ep_time,'cumulative_train_time_sec':cum,'samples_per_sec_epoch':n/max(1e-9,ep_time)})
+      if should_print_epoch(ep,EPOCHS): print(f"[v7style-train] theta_idx={theta_idx:02d} epoch {ep+1}/{EPOCHS} total={st['total']:.4f}",flush=True)
+    tag=f"theta_independent_theta{theta_idx:02d}_v7style"; torch.save(net.state_dict(),f"{TRAINING_RESULT_DIR}/{tag}_model.pt"); pickle.dump(norm,open(f"{TRAINING_RESULT_DIR}/{tag}_norm.pkl","wb")); json.dump({'theta_idx':theta_idx,'theta':d['theta'],'alpha':d['alpha'],'beta':d['beta'],'run_tag':V7STYLE_RUN_TAG},open(f"{TRAINING_RESULT_DIR}/{tag}_config.json","w"),indent=2)
+    pd.DataFrame(rows).to_csv(f"{TRAINING_RESULT_DIR}/{tag}_training_log.csv",index=False)
+    print('[v7style-train-time]',flush=True); print(f'theta_idx = {theta_idx}',flush=True); print(f'total_train_time_sec = {time.perf_counter()-train_start:.3f}',flush=True); print(f'mean_epoch_time_sec = {float(np.mean(et)):.3f}',flush=True); print(f'min_epoch_time_sec = {float(np.min(et)):.3f}',flush=True); print(f'max_epoch_time_sec = {float(np.max(et)):.3f}',flush=True); print(f'samples_per_sec = {n*EPOCHS/max(1e-9,time.perf_counter()-train_start):.3f}',flush=True); print(f'train_samples = {n}',flush=True); print(f'epochs = {EPOCHS}',flush=True)
+    return net,norm,d
+
+def eval_single_theta_v7style_external(case,theta_idx,theta_list,net,norm,mc_eval=P0_STYLE_SINGLE_SCENARIO_MC,seed=P0_STYLE_EVAL_SEED):
+    t0=time.perf_counter(); pd_mu,qd_mu,pr_mu,qr_mu=draw_theta_external_test_scenario(case,seed); ext=build_external_mc_labels_for_theta(case,theta_idx,theta_list,pd_mu,qd_mu,pr_mu,qr_mu,mc_eval,seed); opf_t=time.perf_counter()-t0
+    xmu=ext['x_mu']; xn=(xmu.reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std']; xt=torch.tensor(xn,dtype=torch.float32,device=DEVICE)
+    if DEVICE=='cuda': torch.cuda.synchronize()
+    ts=[]
+    for _ in range(PREDICT_TIMING_REPEAT):
+      t1=time.perf_counter();
+      with torch.no_grad(): hf,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
+      if DEVICE=='cuda': torch.cuda.synchronize(); ts.append((time.perf_counter()-t1)*1000)
+      else: ts.append((time.perf_counter()-t1)*1000)
+    hm=float(norm['h_mean'][0,0]); hs=float(norm['h_std'][0,0]); hmc=ext['h_mc']; z=np.linspace(hmc.min()-0.2,hmc.max()+0.2,600); cdf_mc=np.searchsorted(np.sort(hmc),z,side='right')/len(hmc)
+    w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1)
+    c0=time.perf_counter(); cdf_det=gmm_cdf((z-hm)/(hs+1e-9),w,mu,sigma); cdf_ms=(time.perf_counter()-c0)*1000
+    s0=time.perf_counter(); cdf_s=[]; qpost={0.05:[],0.5:[],0.95:[]}
+    for _ in range(EVAL_POSTERIOR_SAMPLES):
+      with torch.no_grad(): _,ws,mus,sigs=net.forward_gmm_single(xt,sample=True)
+      ws=ws.cpu().numpy().reshape(-1); mus=mus.cpu().numpy().reshape(-1); sigs=sigs.cpu().numpy().reshape(-1); cdf_s.append(gmm_cdf((z-hm)/(hs+1e-9),ws,mus,sigs))
+      for q in qpost: qpost[q].append(hm+hs*float(np.asarray(gmm_quantile(q,ws,mus,sigs)).reshape(-1)[0]))
+    band_t=time.perf_counter()-s0; cdf_s=np.asarray(cdf_s)
+    p05=np.nanquantile(cdf_s,BAND_LO,axis=0); p50=np.nanquantile(cdf_s,0.5,axis=0); p95=np.nanquantile(cdf_s,BAND_HI,axis=0)
+    Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True); fig=f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v7style_external_mc{mc_eval}_bandfix.png"
+    plt.figure(figsize=(7,5),dpi=180); plt.plot(z,cdf_mc,'k-',lw=2,label='External MC-OPF empirical CDF'); plt.plot(z,cdf_det,'r--',lw=2,label='Deterministic GMM CDF');
+    for i in range(min(15,cdf_s.shape[0])): plt.plot(z,cdf_s[i],color='gray',lw=0.6,alpha=0.35)
+    plt.fill_between(z,p05,p95,color='#93c5fd',alpha=0.45,label='posterior CDF 5–95% band (epistemic)'); plt.legend(); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(fig,dpi=220); plt.close()
+    met={'theta_idx':theta_idx,'external_cdf_arms':float(np.sqrt(np.mean((cdf_det-cdf_mc)**2))*100),'deterministic_cdf_arms':float(np.sqrt(np.mean((cdf_det-cdf_mc)**2))*100),'posterior_mean_cdf_arms':float(np.sqrt(np.mean((np.nanmean(cdf_s,axis=0)-cdf_mc)**2))*100),'posterior_median_cdf_arms':float(np.sqrt(np.mean((p50-cdf_mc)**2))*100),'band_coverage_grid':float(np.mean((cdf_mc>=p05)&(cdf_mc<=p95))),'mean_band_width':float(np.mean(p95-p05)),'max_band_width':float(np.max(p95-p05)),'h_mc_mean':float(np.mean(hmc)),'h_mc_std':float(np.std(hmc)),'n_success':int(ext['n_success']),'n_infeasible':int(ext['n_infeasible']),'opf_mc_total_time_sec':opf_t,'opf_per_sample_ms':opf_t*1000/max(1,mc_eval),'nn_forward_mean_ms':float(np.mean(ts)),'nn_forward_std_ms':float(np.std(ts)),'cdf_compute_time_ms':cdf_ms,'posterior_cdf_band_time_sec':band_t,'total_prediction_eval_time_sec':band_t+(sum(ts)/1000.0)+cdf_ms/1000.0}
+    for q in [0.05,0.25,0.5,0.75,0.95]:
+      qemp=float(np.quantile(hmc,q)); qdet=hm+hs*float(np.asarray(gmm_quantile(q,w,mu,sigma)).reshape(-1)[0]); met[f'external_q{int(q*100):02d}_error']=float(qdet-qemp)
+    met.update({'pred_q05_post_mean':float(np.mean(qpost[0.05])),'pred_q50_post_mean':float(np.mean(qpost[0.5])),'pred_q95_post_mean':float(np.mean(qpost[0.95])),'pred_q05_post_p05':float(np.quantile(qpost[0.05],0.05)),'pred_q05_post_p95':float(np.quantile(qpost[0.05],0.95)),'pred_q50_post_p05':float(np.quantile(qpost[0.5],0.05)),'pred_q50_post_p95':float(np.quantile(qpost[0.5],0.95)),'pred_q95_post_p05':float(np.quantile(qpost[0.95],0.05)),'pred_q95_post_p95':float(np.quantile(qpost[0.95],0.95)),'mc_q05':float(np.quantile(hmc,0.05)),'mc_q50':float(np.quantile(hmc,0.5)),'mc_q95':float(np.quantile(hmc,0.95))})
+    out_csv=f"{TRAINING_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style_external_single_metrics.csv"; pd.DataFrame([met]).to_csv(out_csv,index=False)
+    print('[nn-predict-time]',flush=True); print(f'theta_idx = {theta_idx}',flush=True); print(f'repeat = {PREDICT_TIMING_REPEAT}',flush=True); print(f'mean_forward_ms = {met["nn_forward_mean_ms"]}',flush=True); print(f'std_forward_ms = {met["nn_forward_std_ms"]}',flush=True); print(f'min_forward_ms = {float(np.min(ts))}',flush=True); print(f'max_forward_ms = {float(np.max(ts))}',flush=True); print(f'cdf_compute_ms = {cdf_ms}',flush=True); print(f'posterior_band_time_sec = {band_t}',flush=True); print(f'opf_mc_total_time_sec = {opf_t}',flush=True); print(f'opf_per_sample_ms = {met["opf_per_sample_ms"]}',flush=True)
+    return met
+
+def main_theta_independent_v5():
+    print('[v5-theta-independent] start',flush=True); case=build_ieee33_case(); XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active_records,all_names=get_or_build_flex_dataset_cache(case)
+    theta_list_to_train=DEBUG_THETA_LIST if THETA_TRAIN_MODE=='subset' else TRAIN_THETA_LIST
+    for j in theta_list_to_train:
+      if RUN_TRAINING:
+        net,norm,_=train_single_theta_v7style_model(case,XMU,XREAL,YH,YP0,YQ0,YPG,YQG,j,THETA_LIST)
+      else:
+        mp=Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_model.pt"); npk=Path(f"{TRAINING_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_norm.pkl")
+        if (not mp.exists()) or (not npk.exists()): print(f"[v5-warning] missing model for theta_idx={j}",flush=True); continue
+        norm=pickle.load(open(npk,'rb')); net=BayesSingleThetaV7StyleGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); net.load_state_dict(torch.load(mp,map_location=DEVICE)); net.eval()
+      if RUN_P0_STYLE_EXTERNAL_EVAL: eval_single_theta_v7style_external(case,j,THETA_LIST,net,norm,mc_eval=P0_STYLE_SINGLE_SCENARIO_MC,seed=P0_STYLE_EVAL_SEED)
+    print('[v5-theta-independent] done',flush=True)
+
+
+
+def build_external_reference_for_theta(case, theta_idx, theta_list, seed, mc_eval):
+    pd_mu, qd_mu, pr_mu, qr_mu = draw_theta_external_test_scenario(case, seed)
+    np.random.seed(seed + 100000 + theta_idx)
+    theta=float(theta_list[theta_idx]); alpha=float(np.cos(theta)); beta=float(np.sin(theta))
+    h_list=[]; p0_list=[]; q0_list=[]; infeasible=0
+    t0=time.perf_counter()
+    std_pd = 0.10 * np.maximum(pd_mu, 1e-3)
+    std_pr = 0.12 * np.maximum(pr_mu, 1e-3)
+    for _ in range(mc_eval):
+        pd = pd_mu.copy(); pr = pr_mu.copy()
+        for i in range(case.n_bus):
+            if pd_mu[i] > 1e-9: pd[i] = sample_trunc_normal(pd_mu[i], std_pd[i], 0.0, None)
+        for k,b in enumerate(case.pv_buses):
+            pr[b] = sample_trunc_normal(pr_mu[b], std_pr[b], 0.0, float(case.pv_pmax[k]))
+        qd = qd_mu * (pd / np.maximum(pd_mu, 1e-6)); qr = pr * math.tan(math.acos(case.pv_pf))
+        sol=solve_flex_support_gurobi_33bus(case,pd,qd,pr,qr,alpha,beta,return_detail=True,stabilize_dispatch=STABILIZE_OPF_DISPATCH)
+        if sol.get('ok',False):
+            h_list.append(float(sol['h'])); p0_list.append(float(sol['P0'])); q0_list.append(float(sol['Q0']))
+        else: infeasible += 1
+    if len(h_list)==0: raise RuntimeError(f'[compare] all infeasible theta_idx={theta_idx} seed={seed}')
+    opf_t=time.perf_counter()-t0
+    return {'theta_idx':theta_idx,'theta':theta,'alpha':alpha,'beta':beta,'seed':seed,'mc_eval':mc_eval,'x_mu':make_feature_vector(case,pd_mu,pr_mu),'pd_mu':pd_mu,'qd_mu':qd_mu,'pr_mu':pr_mu,'qr_mu':qr_mu,'h_mc':np.array(h_list),'p0_mc':np.array(p0_list),'q0_mc':np.array(q0_list),'n_success':len(h_list),'n_infeasible':infeasible,'opf_mc_total_time_sec':opf_t,'opf_per_sample_ms':opf_t*1000/max(1,mc_eval)}
+
+def ensure_v7style_model_for_theta(case, theta_idx, data_dict):
+    mp=Path(V7STYLE_RESULT_DIR)/V7_MODEL_TEMPLATE.format(theta_idx=theta_idx)
+    npk=Path(V7STYLE_RESULT_DIR)/V7_NORM_TEMPLATE.format(theta_idx=theta_idx)
+    if mp.exists() and npk.exists() and SKIP_TRAIN_IF_MODEL_EXISTS:
+        norm=pickle.load(open(npk,'rb')); net=BayesSingleThetaV7StyleGMM2SupportNet(data_dict[0].shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); net.load_state_dict(torch.load(mp,map_location=DEVICE)); net.eval(); return net,norm,{'model_path':str(mp),'status':'loaded'}
+    if (not mp.exists() or not npk.exists()) and TRAIN_V7_MODEL_IF_MISSING:
+        XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,*_ = data_dict
+        old=DEBUG_THETA_LIST.copy();
+        net,norm,_=train_single_theta_v7style_model(case,XMU,XREAL,YH,YP0,YQ0,YPG,YQG,theta_idx,THETA_LIST)
+        return net,norm,{'model_path':str(mp),'status':'trained'}
+    print(f'[compare-warning] missing v7 model theta={theta_idx}',flush=True); return None,None,{'model_path':str(mp),'status':'missing_model'}
+
+def load_v8style_theta_model_for_compare(case, theta_idx):
+    mp=Path(V8STYLE_RESULT_DIR)/V8_MODEL_TEMPLATE.format(theta_idx=theta_idx)
+    npk=Path(V8STYLE_RESULT_DIR)/V8_NORM_TEMPLATE.format(theta_idx=theta_idx)
+    if (not mp.exists()) or (not npk.exists()):
+        print(f'[compare-warning] missing v8 model theta={theta_idx}',flush=True); return None
+    norm=pickle.load(open(npk,'rb')); net=BayesSingleThetaGMM2SupportNet(len(norm['x_mu_mean'][0]),case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); net.load_state_dict(torch.load(mp,map_location=DEVICE)); net.eval(); return net,norm,{'model_path':str(mp),'status':'loaded'}
+
+def _timed_forward(net,xt,sample=False):
+    ts=[]
+    for _ in range(PREDICT_TIMING_REPEAT):
+        if DEVICE=='cuda': torch.cuda.synchronize()
+        t0=time.perf_counter();
+        with torch.no_grad(): out=net.forward_gmm_single(xt,sample=sample)
+        if DEVICE=='cuda': torch.cuda.synchronize()
+        ts.append((time.perf_counter()-t0)*1000)
+    return out,ts
+
+def predict_cdf_v8style_on_external_reference(case,theta_idx,ref,z_grid):
+    loaded=load_v8style_theta_model_for_compare(case,theta_idx)
+    if loaded is None: return {'method':'v8style','theta_idx':theta_idx,'seed':ref['seed'],'mc_eval':ref['mc_eval'],'status':'missing_model'},None
+    net,norm,paths=loaded; x=(ref['x_mu'].reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std']; xt=torch.tensor(x,dtype=torch.float32,device=DEVICE)
+    (_,w,mu,sigma),ts=_timed_forward(net,xt,sample=False); w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1)
+    hm=float(norm['h_mean'][0,0]); hs=float(norm['h_std'][0,0]); cdf=gmm_cdf((z_grid-hm)/(hs+1e-9),w,mu,sigma); cdf_mc=np.searchsorted(np.sort(ref['h_mc']),z_grid,side='right')/len(ref['h_mc'])
+    m={'method':'v8style','theta_idx':theta_idx,'seed':ref['seed'],'mc_eval':ref['mc_eval'],'external_cdf_arms':float(np.sqrt(np.mean((cdf-cdf_mc)**2))*100),'posterior_mean_cdf_arms':np.nan,'q50_error':float(hm+hs*float(np.asarray(gmm_quantile(0.5,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.5)),'q95_error':float(hm+hs*float(np.asarray(gmm_quantile(0.95,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.95)),'opf_per_sample_ms':ref['opf_per_sample_ms'],'nn_forward_mean_ms':float(np.mean(ts)),'status':'ok','model_path':paths['model_path']}
+    return m,cdf
+
+def predict_cdf_v7style_on_external_reference(case,theta_idx,ref,z_grid,save_band_plot=False,output_prefix=None,net=None,norm=None):
+    if net is None or norm is None:
+        loaded=ensure_v7style_model_for_theta(case,theta_idx,get_or_build_flex_dataset_cache(case)); net,norm,_=loaded
+    x=(ref['x_mu'].reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std']; xt=torch.tensor(x,dtype=torch.float32,device=DEVICE)
+    (_,w,mu,sigma),ts=_timed_forward(net,xt,sample=False); w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1); hm=float(norm['h_mean'][0,0]); hs=float(norm['h_std'][0,0])
+    c0=time.perf_counter(); cdf=gmm_cdf((z_grid-hm)/(hs+1e-9),w,mu,sigma); cdf_ms=(time.perf_counter()-c0)*1000
+    cdf_mc=np.searchsorted(np.sort(ref['h_mc']),z_grid,side='right')/len(ref['h_mc'])
+    s0=time.perf_counter(); cs=[]
+    for _ in range(EVAL_POSTERIOR_SAMPLES):
+        with torch.no_grad(): _,ws,mus,sigs=net.forward_gmm_single(xt,sample=True)
+        cs.append(gmm_cdf((z_grid-hm)/(hs+1e-9),ws.cpu().numpy().reshape(-1),mus.cpu().numpy().reshape(-1),sigs.cpu().numpy().reshape(-1)))
+    cs=np.asarray(cs); band_t=time.perf_counter()-s0; p05=np.nanquantile(cs,0.05,axis=0); p50=np.nanquantile(cs,0.5,axis=0); p95=np.nanquantile(cs,0.95,axis=0)
+    if save_band_plot and output_prefix:
+        Path(V7STYLE_RESULT_DIR).mkdir(parents=True,exist_ok=True); fig=f"{V7STYLE_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v7style_external_seed{ref['seed']:03d}_mc{ref['mc_eval']}_bandfix.png"; plt.figure(figsize=(7,5),dpi=180); plt.plot(z_grid,cdf_mc,'k-',lw=2,label='External MC-OPF empirical CDF'); plt.plot(z_grid,cdf,'r--',lw=2,label='v7 deterministic GMM CDF'); plt.fill_between(z_grid,p05,p95,color='#93c5fd',alpha=0.4,label='v7 posterior CDF 5-95%'); plt.legend(); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(fig,dpi=220); plt.close()
+    m={'method':'v7style','theta_idx':theta_idx,'seed':ref['seed'],'mc_eval':ref['mc_eval'],'external_cdf_arms':float(np.sqrt(np.mean((cdf-cdf_mc)**2))*100),'posterior_mean_cdf_arms':float(np.sqrt(np.mean((np.nanmean(cs,axis=0)-cdf_mc)**2))*100),'posterior_median_cdf_arms':float(np.sqrt(np.mean((p50-cdf_mc)**2))*100),'q05_error':float(hm+hs*float(np.asarray(gmm_quantile(0.05,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.05)),'q25_error':float(hm+hs*float(np.asarray(gmm_quantile(0.25,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.25)),'q50_error':float(hm+hs*float(np.asarray(gmm_quantile(0.5,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.5)),'q75_error':float(hm+hs*float(np.asarray(gmm_quantile(0.75,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.75)),'q95_error':float(hm+hs*float(np.asarray(gmm_quantile(0.95,w,mu,sigma)).reshape(-1)[0])-np.quantile(ref['h_mc'],0.95)),'band_coverage_grid':float(np.mean((cdf_mc>=p05)&(cdf_mc<=p95))),'mean_band_width':float(np.mean(p95-p05)),'max_band_width':float(np.max(p95-p05)),'opf_per_sample_ms':ref['opf_per_sample_ms'],'nn_forward_mean_ms':float(np.mean(ts)),'nn_forward_std_ms':float(np.std(ts)),'nn_forward_min_ms':float(np.min(ts)),'nn_forward_max_ms':float(np.max(ts)),'posterior_cdf_band_time_sec':band_t,'cdf_compute_time_ms':cdf_ms,'total_prediction_eval_time_sec':band_t+cdf_ms/1000+sum(ts)/1000,'status':'ok'}
+    return m,cdf,p05,p95,cdf_mc
+
+def run_compare_theta02_v7_vs_v8(case,data_dict):
+    theta_idx=2; seed=COMPARE_THETA02_SEED; mc=COMPARE_THETA02_MC; Path(COMPARISON_RESULT_DIR).mkdir(parents=True,exist_ok=True)
+    net,norm,mp=ensure_v7style_model_for_theta(case,theta_idx,data_dict)
+    ref=build_external_reference_for_theta(case,theta_idx,THETA_LIST,seed,mc); h=ref['h_mc']; margin=0.05*(h.max()-h.min()+1e-9); z=np.linspace(h.min()-margin,h.max()+margin,600)
+    v7,c7,p05,p95,cdf_mc=predict_cdf_v7style_on_external_reference(case,theta_idx,ref,z,save_band_plot=True,output_prefix='t02',net=net,norm=norm)
+    v8,c8=predict_cdf_v8style_on_external_reference(case,theta_idx,ref,z)
+    plt.figure(figsize=(7,5),dpi=200); plt.plot(z,cdf_mc,'k-',lw=2,label='External MC-OPF empirical CDF'); plt.plot(z,c7,'r--',lw=2,label='v7 deterministic'); plt.fill_between(z,p05,p95,color='#93c5fd',alpha=0.4,label='v7 posterior 5-95%')
+    if c8 is not None: plt.plot(z,c8,color='orange',ls='-.',lw=2,label='v8 deterministic')
+    plt.title(f"theta=02 seed={seed} mc={mc} v7={v7['external_cdf_arms']:.3f} v8={v8.get('external_cdf_arms',np.nan):.3f}"); plt.legend(); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(f"{COMPARISON_RESULT_DIR}/compare_theta02_v7_vs_v8_seed{seed:03d}_mc{mc}_cdf.png",dpi=220); plt.close()
+    df=pd.DataFrame([v7,v8]); df.to_csv(f"{COMPARISON_RESULT_DIR}/compare_theta02_v7_vs_v8_seed{seed:03d}_mc{mc}_metrics.csv",index=False)
+    return df
+
+def run_theta06_v7style_multiseed_external(case,data_dict):
+    theta_idx=6; net,norm,_=ensure_v7style_model_for_theta(case,theta_idx,data_dict); rows=[]
+    for seed in COMPARE_THETA06_SEEDS:
+        ref=build_external_reference_for_theta(case,theta_idx,THETA_LIST,seed,COMPARE_THETA06_MC); h=ref['h_mc']; margin=0.05*(h.max()-h.min()+1e-9); z=np.linspace(h.min()-margin,h.max()+margin,600)
+        m,_,_,_,_=predict_cdf_v7style_on_external_reference(case,theta_idx,ref,z,save_band_plot=True,output_prefix='t06',net=net,norm=norm)
+        rows.append(m); pd.DataFrame([m]).to_csv(f"{V7STYLE_RESULT_DIR}/theta_independent_theta06_v7style_external_seed{seed:03d}_mc{COMPARE_THETA06_MC}_metrics.csv",index=False)
+    by=pd.DataFrame(rows); Path(COMPARISON_RESULT_DIR).mkdir(parents=True,exist_ok=True); by.to_csv(f"{COMPARISON_RESULT_DIR}/theta06_v7style_multiseed_external_by_seed.csv",index=False)
+    arr=by['external_cdf_arms'].astype(float).values; q50=np.abs(by['q50_error'].astype(float).values)
+    summ={'theta_idx':6,'n_seeds':len(rows),'mc_eval':COMPARE_THETA06_MC,'mean_arms':float(np.mean(arr)),'median_arms':float(np.median(arr)),'max_arms':float(np.max(arr)),'min_arms':float(np.min(arr)),'q90_arms':float(np.quantile(arr,0.9)),'std_arms':float(np.std(arr)),'mean_q50_abs_error':float(np.mean(q50)),'max_q50_abs_error':float(np.max(q50)),'mean_band_coverage_grid':float(by['band_coverage_grid'].mean()),'mean_band_width':float(by['mean_band_width'].mean()),'mean_opf_per_sample_ms':float(by['opf_per_sample_ms'].mean()),'mean_nn_forward_ms':float(by['nn_forward_mean_ms'].mean())}
+    pd.DataFrame([summ]).to_csv(f"{COMPARISON_RESULT_DIR}/theta06_v7style_multiseed_external_summary.csv",index=False)
+    return by
+
+def write_global_comparison_summary():
+    Path(COMPARISON_RESULT_DIR).mkdir(parents=True,exist_ok=True); rows=[]
+    p1=Path(f"{COMPARISON_RESULT_DIR}/compare_theta02_v7_vs_v8_seed{COMPARE_THETA02_SEED:03d}_mc{COMPARE_THETA02_MC}_metrics.csv")
+    if p1.exists():
+        d=pd.read_csv(p1)
+        for _,r in d.iterrows(): rows.append({'experiment_name':'theta02_compare','method':r.get('method'),'theta_idx':r.get('theta_idx'),'seed':r.get('seed'),'mc_eval':r.get('mc_eval'),'external_cdf_arms':r.get('external_cdf_arms'),'posterior_mean_cdf_arms':r.get('posterior_mean_cdf_arms',np.nan),'posterior_median_cdf_arms':r.get('posterior_median_cdf_arms',np.nan),'q05_error':r.get('q05_error',np.nan),'q50_error':r.get('q50_error',np.nan),'q95_error':r.get('q95_error',np.nan),'band_coverage_grid':r.get('band_coverage_grid',np.nan),'mean_band_width':r.get('mean_band_width',np.nan),'opf_per_sample_ms':r.get('opf_per_sample_ms',np.nan),'nn_forward_mean_ms':r.get('nn_forward_mean_ms',np.nan),'total_train_time_sec':np.nan,'model_path':r.get('model_path',''),'status':r.get('status','ok')})
+    p2=Path(f"{COMPARISON_RESULT_DIR}/theta06_v7style_multiseed_external_by_seed.csv")
+    if p2.exists():
+        d=pd.read_csv(p2)
+        for _,r in d.iterrows(): rows.append({'experiment_name':'theta06_multiseed','method':'v7style','theta_idx':6,'seed':r.get('seed',np.nan),'mc_eval':COMPARE_THETA06_MC,'external_cdf_arms':r.get('external_cdf_arms'),'posterior_mean_cdf_arms':r.get('posterior_mean_cdf_arms'),'posterior_median_cdf_arms':r.get('posterior_median_cdf_arms'),'q05_error':r.get('q05_error'),'q50_error':r.get('q50_error'),'q95_error':r.get('q95_error'),'band_coverage_grid':r.get('band_coverage_grid'),'mean_band_width':r.get('mean_band_width'),'opf_per_sample_ms':r.get('opf_per_sample_ms'),'nn_forward_mean_ms':r.get('nn_forward_mean_ms'),'total_train_time_sec':np.nan,'model_path':'','status':r.get('status','ok')})
+    pd.DataFrame(rows).to_csv(f"{COMPARISON_RESULT_DIR}/comparison_summary.csv",index=False)
+
+def write_comparison_plots():
+    Path(COMPARISON_RESULT_DIR).mkdir(parents=True,exist_ok=True)
+    p=Path(f"{COMPARISON_RESULT_DIR}/compare_theta02_v7_vs_v8_seed{COMPARE_THETA02_SEED:03d}_mc{COMPARE_THETA02_MC}_metrics.csv")
+    if p.exists():
+        d=pd.read_csv(p); dd=d[d['status']!='missing_model'];
+        if len(dd)>0:
+            plt.figure(figsize=(5,4)); plt.bar(dd['method'],dd['external_cdf_arms']); plt.ylabel('ARMS'); plt.tight_layout(); plt.savefig(f"{COMPARISON_RESULT_DIR}/compare_theta02_v7_vs_v8_arms_bar.png",dpi=200); plt.close()
+            if 'nn_forward_mean_ms' in dd.columns:
+                plt.figure(figsize=(5,4)); plt.bar(dd['method'],dd['nn_forward_mean_ms']); plt.ylabel('nn_forward_mean_ms'); plt.tight_layout(); plt.savefig(f"{COMPARISON_RESULT_DIR}/compare_prediction_time_ms.png",dpi=200); plt.close()
+    p2=Path(f"{COMPARISON_RESULT_DIR}/theta06_v7style_multiseed_external_by_seed.csv")
+    if p2.exists():
+        d=pd.read_csv(p2); plt.figure(figsize=(6,4)); plt.plot(d['seed'],d['external_cdf_arms'],'o-'); plt.xlabel('seed'); plt.ylabel('ARMS'); plt.tight_layout(); plt.savefig(f"{COMPARISON_RESULT_DIR}/theta06_v7style_multiseed_arms_by_seed.png",dpi=200); plt.close(); plt.figure(figsize=(5,4)); plt.boxplot(d['external_cdf_arms']); plt.ylabel('ARMS'); plt.tight_layout(); plt.savefig(f"{COMPARISON_RESULT_DIR}/theta06_v7style_multiseed_arms_box.png",dpi=200); plt.close()
+
+def main_theta_independent_v5_1_comparison():
+    print('[v5_1-comparison] start',flush=True)
+    case=build_ieee33_case(); data_dict=get_or_build_flex_dataset_cache(case); Path(COMPARISON_RESULT_DIR).mkdir(parents=True,exist_ok=True)
+    if RUN_COMPARE_THETA02_V7_VS_V8: run_compare_theta02_v7_vs_v8(case,data_dict)
+    if RUN_COMPARE_THETA06_MULTI_SCENARIO: run_theta06_v7style_multiseed_external(case,data_dict)
+    write_global_comparison_summary(); write_comparison_plots(); print('[v5_1-comparison] done',flush=True)
+
+
+
+# ===== v6 all-theta train/eval/synthesis =====
+ALL_THETA_MODE = True
+ALL_THETA_LIST = list(range(N_THETA))
+ALL_THETA_TRAIN = False
+ALL_THETA_EVAL = False
+ALL_THETA_FLEX_SYNTHESIS = False
+ALL_THETA_RESULT_DIR = "training_results_theta_independent_v7style_no_pcc_branch_limit_data1000_mc60_qcal_only_alltheta"
+EXISTING_MC2500_DIR = "training_results_theta_independent_v7style_no_pcc_branch_limit_data1000_mc60_qcal_only_comparison_mc2500"
+ALL_THETA_COMPARISON_DIR = "training_results_theta_independent_v7style_no_pcc_branch_limit_data1000_mc60_qcal_only_comparison_mc2500_seeds04_10"
+COMBINED_MC2500_DIR = "training_results_theta_independent_v7style_no_pcc_branch_limit_data1000_mc60_qcal_only_comparison_mc2500_seeds01_10_combined"
+ADDITIONAL_EVAL_SEEDS = list(range(4,11))
+ALL_THETA_FLEX_DIR = "training_results_theta_independent_v7style_no_pcc_branch_limit_flex_synthesis"
+TRAIN_V7_MODEL_IF_MISSING = True
+SKIP_TRAIN_IF_MODEL_EXISTS = True
+ALL_THETA_EVAL_SEEDS = ADDITIONAL_EVAL_SEEDS
+ALL_THETA_EVAL_MC = 2500
+FLEX_SYNTHESIS_SEEDS = [1]
+FLEX_SYNTHESIS_MC = 2500
+FLEX_SYNTHESIS_QUANTILES = [0.05,0.50,0.95]
+
+def _copy_theta_artifacts_to_alltheta(theta_idx):
+    Path(ALL_THETA_RESULT_DIR).mkdir(parents=True, exist_ok=True)
+    src=f"{TRAINING_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style"
+    for ext in ['model.pt','norm.pkl','config.json','training_log.csv']:
+        sp=Path(f"{src}_{ext}")
+        if sp.exists():
+            dp=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style_{ext}")
+            dp.write_bytes(sp.read_bytes())
+
+def load_existing_all_theta_models(case):
+    mp={}
+    for j in ALL_THETA_LIST:
+        m=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_model.pt")
+        n=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_norm.pkl")
+        if m.exists() and n.exists():
+            norm=pickle.load(open(n,'rb')); net=BayesSingleThetaV7StyleGMM2SupportNet(len(norm['x_mu_mean'][0]),case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); net.load_state_dict(torch.load(m,map_location=DEVICE)); net.eval(); mp[j]={'net':net,'norm':norm,'model_path':str(m),'status':'loaded'}
+        else:
+            mp[j]={'net':None,'norm':None,'model_path':str(m),'status':'missing_model'}
+    return mp
+
+def train_or_load_all_theta_v7style_models(case,data_dict):
+    XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,*_=data_dict; out=[]; mp={}
+    Path(ALL_THETA_RESULT_DIR).mkdir(parents=True, exist_ok=True)
+    for j in ALL_THETA_LIST:
+        m=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_model.pt"); n=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_norm.pkl"); c=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_config.json")
+        if m.exists() and n.exists() and SKIP_TRAIN_IF_MODEL_EXISTS:
+            print(f"[all-theta-load] theta_idx={j:02d} existing model found, skip training",flush=True)
+            norm=pickle.load(open(n,'rb')); net=BayesSingleThetaV7StyleGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); net.load_state_dict(torch.load(m,map_location=DEVICE)); net.eval(); status='loaded'
+        elif TRAIN_V7_MODEL_IF_MISSING:
+            t0=time.perf_counter(); net,norm,_=train_single_theta_v7style_model(case,XMU,XREAL,YH,YP0,YQ0,YPG,YQG,j,THETA_LIST); status='trained'; _copy_theta_artifacts_to_alltheta(j); m=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_model.pt"); n=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_norm.pkl"); c=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_config.json")
+        else:
+            print(f"[all-theta-warning] theta_idx={j:02d} missing and training disabled",flush=True); mp[j]={'net':None,'norm':None,'model_path':str(m),'status':'missing_model'}; continue
+        mp[j]={'net':net,'norm':norm,'model_path':str(m),'status':status}
+        out.append({'theta_idx':j,'theta':float(THETA_LIST[j]),'alpha':float(np.cos(THETA_LIST[j])),'beta':float(np.sin(THETA_LIST[j])),'status':status,'model_path':str(m),'norm_path':str(n),'config_path':str(c),'total_train_time_sec':np.nan,'mean_epoch_time_sec':np.nan,'final_total_loss':np.nan,'final_nll_loss':np.nan,'final_phys_loss':np.nan,'final_kl_loss':np.nan,'final_weighted_kl_loss':np.nan,'final_dispatch_loss':np.nan,'final_t_loss':np.nan})
+        pd.DataFrame([out[-1]]).to_csv(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{j:02d}_v7style_train_summary.csv",index=False)
+    pd.DataFrame(out).to_csv(f"{ALL_THETA_RESULT_DIR}/all_theta_v7style_train_summary.csv",index=False)
+    return mp
+
+def draw_external_scenario_by_seed(case, seed):
+    rng=np.random.default_rng(seed); return sample_scenario_means(case,rng)
+
+def build_external_reference_for_theta_given_scenario(case,theta_idx,theta_list,pd_mu,qd_mu,pr_mu,qr_mu,seed,mc_eval):
+    np.random.seed(seed+100000+theta_idx); theta=float(theta_list[theta_idx]); alpha=float(np.cos(theta)); beta=float(np.sin(theta)); h=[]; p0=[]; q0=[]; infeas=0; t0=time.perf_counter(); std_pd=0.10*np.maximum(pd_mu,1e-3); std_pr=0.12*np.maximum(pr_mu,1e-3)
+    for sample_idx in range(mc_eval):
+        pdv=pd_mu.copy(); prv=pr_mu.copy()
+        for i in range(case.n_bus):
+            if pd_mu[i]>1e-9: pdv[i]=sample_trunc_normal(pd_mu[i],std_pd[i],0.0,None)
+        for k,b in enumerate(case.pv_buses):
+            prv[b]=sample_trunc_normal(pr_mu[b],std_pr[b],0.0,float(case.pv_pmax[k]))
+        qdv=qd_mu*(pdv/np.maximum(pd_mu,1e-6)); qrv=prv*math.tan(math.acos(case.pv_pf))
+        sol=solve_flex_support_gurobi_33bus(case,pdv,qdv,prv,qrv,alpha,beta,return_detail=True,stabilize_dispatch=STABILIZE_OPF_DISPATCH)
+        if sol.get('ok',False): h.append(float(sol['h'])); p0.append(float(sol['P0'])); q0.append(float(sol['Q0']))
+        else: infeas+=1
+        if mc_eval >= 2500 and ((sample_idx+1) % 500 == 0 or (sample_idx+1) == mc_eval):
+            print(f"[mc2500-opf] theta={theta_idx:02d} seed={seed:03d} sample={sample_idx+1}/{mc_eval}", flush=True)
+    if len(h)==0: raise RuntimeError(f'all infeasible theta={theta_idx} seed={seed}')
+    opf=time.perf_counter()-t0
+    return {'theta_idx':theta_idx,'theta':theta,'alpha':alpha,'beta':beta,'seed':seed,'mc_eval':mc_eval,'x_mu':make_feature_vector(case,pd_mu,pr_mu),'pd_mu':pd_mu,'qd_mu':qd_mu,'pr_mu':pr_mu,'qr_mu':qr_mu,'h_mc':np.array(h),'p0_mc':np.array(p0),'q0_mc':np.array(q0),'n_success':len(h),'n_infeasible':infeas,'opf_mc_total_time_sec':opf,'opf_per_sample_ms':opf*1000/max(1,mc_eval)}
+
+def eval_all_theta_multiseed_v7style(case,data_dict,model_map):
+    rows=[]; Path(ALL_THETA_COMPARISON_DIR).mkdir(parents=True,exist_ok=True)
+    total_jobs=len(ALL_THETA_EVAL_SEEDS)*len(ALL_THETA_LIST); done_jobs=0
+    for seed in ALL_THETA_EVAL_SEEDS:
+        pd_mu,qd_mu,pr_mu,qr_mu=draw_external_scenario_by_seed(case,seed)
+        for j in ALL_THETA_LIST:
+            if j not in model_map or model_map[j]['net'] is None: continue
+            print(f"[more-seeds-eval] seed={seed:03d} theta={j:02d} start", flush=True)
+            ref=build_external_reference_for_theta_given_scenario(case,j,THETA_LIST,pd_mu,qd_mu,pr_mu,qr_mu,seed,ALL_THETA_EVAL_MC)
+            h=ref['h_mc']; margin=0.05*(h.max()-h.min()+1e-9); z=np.linspace(h.min()-margin,h.max()+margin,600)
+            m,cdf,p05,p95,cdf_mc=predict_cdf_v7style_on_external_reference(case,j,ref,z,save_band_plot=False,output_prefix='all',net=model_map[j]['net'],norm=model_map[j]['norm'])
+            fig=f"{ALL_THETA_COMPARISON_DIR}/CDF_theta{j:02d}_seed{seed:03d}_mc{ALL_THETA_EVAL_MC}_v7style_external_bandfix.png"; plt.figure(figsize=(6,4),dpi=170); plt.plot(z,cdf_mc,'k-',lw=2); plt.plot(z,cdf,'r--',lw=2); plt.fill_between(z,p05,p95,color='#93c5fd',alpha=0.4); plt.tight_layout(); plt.savefig(fig,dpi=200); plt.close()
+            m.update({'theta':float(THETA_LIST[j]),'h_mc_mean':float(np.mean(h)),'h_mc_std':float(np.std(h)),'n_success':ref['n_success'],'n_infeasible':ref['n_infeasible'],'opf_per_sample_ms':ref['opf_per_sample_ms'],'model_path':model_map[j]['model_path'],'status':'ok'})
+            pd.DataFrame([m]).to_csv(f"{ALL_THETA_COMPARISON_DIR}/metrics_theta{j:02d}_seed{seed:03d}_mc{ALL_THETA_EVAL_MC}_v7style_external.csv",index=False)
+            rows.append(m)
+            done_jobs += 1
+            print(f"[more-seeds-eval] seed={seed:03d} theta={j:02d} done, ARMS={m['external_cdf_arms']:.4f}, opf_per_sample_ms={m['opf_per_sample_ms']:.3f}", flush=True)
+            print(f"[more-seeds-eval] progress {done_jobs}/{total_jobs}", flush=True)
+    by=pd.DataFrame(rows); by.to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_multiseed_external_by_theta_seed.csv",index=False)
+    s1=by.groupby('theta_idx').agg(theta=('theta','first'),n_seeds=('seed','count'),mean_arms=('external_cdf_arms','mean'),median_arms=('external_cdf_arms','median'),max_arms=('external_cdf_arms','max'),min_arms=('external_cdf_arms','min'),q90_arms=('external_cdf_arms',lambda x: np.quantile(x,0.9)),std_arms=('external_cdf_arms','std'),mean_q50_abs_error=('q50_error',lambda x: np.mean(np.abs(x))),max_q50_abs_error=('q50_error',lambda x: np.max(np.abs(x))),mean_q95_abs_error=('q95_error',lambda x: np.mean(np.abs(x))),mean_band_coverage_grid=('band_coverage_grid','mean'),mean_band_width=('mean_band_width','mean'),mean_opf_per_sample_ms=('opf_per_sample_ms','mean'),mean_nn_forward_ms=('nn_forward_mean_ms','mean')).reset_index(); s1['status']='ok'; s1.to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_external_summary_by_theta.csv",index=False)
+    s2=by.groupby('seed').agg(n_theta=('theta_idx','count'),mean_arms=('external_cdf_arms','mean'),median_arms=('external_cdf_arms','median'),max_arms=('external_cdf_arms','max'),min_arms=('external_cdf_arms','min'),q90_arms=('external_cdf_arms',lambda x: np.quantile(x,0.9)),std_arms=('external_cdf_arms','std')).reset_index()
+    worst=[]
+    for sd in s2['seed']:
+        b=by[by['seed']==sd]; i=b['external_cdf_arms'].idxmax(); worst.append((int(by.loc[i,'theta_idx']),float(by.loc[i,'external_cdf_arms'])))
+    s2['worst_theta_idx']=[w[0] for w in worst]; s2['worst_theta_arms']=[w[1] for w in worst]; s2.to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_external_summary_by_seed.csv",index=False)
+
+def plot_all_theta_evaluation_results():
+    p=Path(f"{ALL_THETA_COMPARISON_DIR}/all_theta_multiseed_external_by_theta_seed.csv"); p1=Path(f"{ALL_THETA_COMPARISON_DIR}/all_theta_external_summary_by_theta.csv"); p2=Path(f"{ALL_THETA_COMPARISON_DIR}/all_theta_external_summary_by_seed.csv")
+    if not p.exists() or not p1.exists() or not p2.exists(): print('[v6-warning] missing csv for plots',flush=True); return
+    by=pd.read_csv(p); s1=pd.read_csv(p1)
+    plt.figure(figsize=(7,4)); plt.bar(s1['theta_idx'],s1['mean_arms']); plt.title('v7style all theta external evaluation mean arms'); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_mean_arms_bar.png",dpi=200); plt.close()
+    plt.figure(figsize=(7,4)); plt.bar(s1['theta_idx'],s1['max_arms']); plt.title('v7style all theta external evaluation max arms'); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_max_arms_bar.png",dpi=200); plt.close()
+    piv=by.pivot_table(index='theta_idx',columns='seed',values='external_cdf_arms'); plt.figure(figsize=(7,5)); plt.imshow(piv.values,aspect='auto',cmap='viridis'); plt.colorbar(label='ARMS'); plt.title('v7style all theta external evaluation arms heatmap'); plt.yticks(range(len(piv.index)),piv.index); plt.xticks(range(len(piv.columns)),piv.columns); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_seed_arms_heatmap.png",dpi=200); plt.close()
+    plt.figure(figsize=(8,4)); data=[by[by['theta_idx']==t]['external_cdf_arms'].values for t in sorted(by['theta_idx'].unique())]; plt.boxplot(data,labels=[int(t) for t in sorted(by['theta_idx'].unique())]); plt.title('v7style all theta external evaluation arms boxplot by theta'); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_arms_boxplot_by_theta.png",dpi=200); plt.close()
+    plt.figure(figsize=(7,4)); plt.bar(s1['theta_idx'],s1['mean_q50_abs_error']); plt.title('v7style all theta external evaluation mean q50 abs error'); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_mean_q50_abs_error_bar.png",dpi=200); plt.close()
+    plt.figure(figsize=(7,4)); plt.bar(s1['theta_idx'],s1['mean_nn_forward_ms']); plt.title('v7style all theta external evaluation nn forward time'); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_nn_forward_time_bar.png",dpi=200); plt.close()
+    plt.figure(figsize=(7,4)); plt.bar(s1['theta_idx'],s1['mean_opf_per_sample_ms']); plt.title('v7style all theta external evaluation opf time'); plt.tight_layout(); plt.savefig(f"{ALL_THETA_COMPARISON_DIR}/all_theta_opf_time_bar.png",dpi=200); plt.close()
+
+def plot_flex_synthesis_for_seed(seed,mc_eval,pred_polys,mc_polys,support_df,area_summary):
+    Path(ALL_THETA_FLEX_DIR).mkdir(parents=True,exist_ok=True)
+    def cl(p): return np.r_[p[:,0],p[0,0]],np.r_[p[:,1],p[0,1]]
+    plt.figure(figsize=(7,6));
+    for q,c in [(0.05,'red'),(0.50,'blue'),(0.95,'orange')]:
+        if q in mc_polys and mc_polys[q] is not None: x,y=cl(mc_polys[q]); plt.plot(x,y,color='black',lw=1.5,alpha=0.6,label=f'MC q{int(q*100):02d}')
+        if q in pred_polys and pred_polys[q] is not None: x,y=cl(pred_polys[q]); plt.plot(x,y,color=c,lw=2,label=f'Pred q{int(q*100):02d}')
+    plt.xlabel('P0'); plt.ylabel('Q0'); plt.legend(); plt.title(f'seed={seed} mc={mc_eval} area errs={area_summary.get("area_error_pct_q50",np.nan):.2f}%'); plt.axis('equal'); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(f"{ALL_THETA_FLEX_DIR}/flex_domain_seed{seed:03d}_mc{mc_eval}_q05_q50_q95_overlay.png",dpi=220); plt.close()
+    plt.figure(figsize=(7,6));
+    if 0.5 in mc_polys and mc_polys[0.5] is not None: x,y=cl(mc_polys[0.5]); plt.plot(x,y,'k-',lw=2,label='MC q50')
+    if 0.5 in pred_polys and pred_polys[0.5] is not None: x,y=cl(pred_polys[0.5]); plt.plot(x,y,'b--',lw=2,label='Pred q50')
+    plt.xlabel('P0'); plt.ylabel('Q0'); plt.legend(); plt.axis('equal'); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(f"{ALL_THETA_FLEX_DIR}/flex_domain_seed{seed:03d}_mc{mc_eval}_q50_compare.png",dpi=220); plt.close()
+    plt.figure(figsize=(7,4)); plt.plot(support_df['theta_idx'],np.abs(support_df['err_q05']),label='q05'); plt.plot(support_df['theta_idx'],np.abs(support_df['err_q50']),label='q50'); plt.plot(support_df['theta_idx'],np.abs(support_df['err_q95']),label='q95'); plt.legend(); plt.tight_layout(); plt.savefig(f"{ALL_THETA_FLEX_DIR}/flex_synthesis_seed{seed:03d}_mc{mc_eval}_support_error_by_theta.png",dpi=220); plt.close()
+    plt.figure(figsize=(5,4)); vals=[area_summary['area_error_pct_q05'],area_summary['area_error_pct_q50'],area_summary['area_error_pct_q95']]; plt.bar(['q05','q50','q95'],vals); plt.tight_layout(); plt.savefig(f"{ALL_THETA_FLEX_DIR}/flex_synthesis_seed{seed:03d}_mc{mc_eval}_area_error_bar.png",dpi=220); plt.close()
+
+def synthesize_flex_domain_for_seed(case,model_map,seed,mc_eval):
+    if set(ALL_THETA_LIST)!=set(range(N_THETA)):
+        print('flex synthesis requires all theta directions; skip synthesis',flush=True); return
+    pd_mu,qd_mu,pr_mu,qr_mu=draw_external_scenario_by_seed(case,seed)
+    hpred={q:[] for q in FLEX_SYNTHESIS_QUANTILES}; hmc={q:[] for q in FLEX_SYNTHESIS_QUANTILES}; rows=[]
+    for j in ALL_THETA_LIST:
+        if j not in model_map or model_map[j]['net'] is None: print('[v6-warning] missing model for synthesis',flush=True); return
+        ref=build_external_reference_for_theta_given_scenario(case,j,THETA_LIST,pd_mu,qd_mu,pr_mu,qr_mu,seed,mc_eval)
+        x=(ref['x_mu'].reshape(1,-1)-model_map[j]['norm']['x_mu_mean'])/model_map[j]['norm']['x_mu_std']; xt=torch.tensor(x,dtype=torch.float32,device=DEVICE)
+        with torch.no_grad(): _,w,mu,sigma=model_map[j]['net'].forward_gmm_single(xt,sample=False)
+        w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1); hm=float(model_map[j]['norm']['h_mean'][0,0]); hs=float(model_map[j]['norm']['h_std'][0,0])
+        rr={'theta_idx':j,'theta':float(THETA_LIST[j]),'alpha':float(np.cos(THETA_LIST[j])),'beta':float(np.sin(THETA_LIST[j]))}
+        for q in FLEX_SYNTHESIS_QUANTILES:
+            qp=hm+hs*float(np.asarray(gmm_quantile(q,w,mu,sigma)).reshape(-1)[0]); qm=float(np.quantile(ref['h_mc'],q)); hpred[q].append(qp); hmc[q].append(qm); rr[f'h_pred_q{int(q*100):02d}']=qp; rr[f'h_mc_q{int(q*100):02d}']=qm; rr[f'err_q{int(q*100):02d}']=qp-qm
+        rows.append(rr)
+    support_df=pd.DataFrame(rows); support_df.to_csv(f"{ALL_THETA_FLEX_DIR}/flex_synthesis_seed{seed:03d}_mc{mc_eval}_support_values.csv",index=False)
+    pred_polys={}; mc_polys={}; area={}
+    for q in FLEX_SYNTHESIS_QUANTILES:
+        pp=support_values_to_polygon(THETA_LIST,np.array(hpred[q])); mp=support_values_to_polygon(THETA_LIST,np.array(hmc[q])); pred_polys[q]=pp; mc_polys[q]=mp
+        pa=polygon_area(pp) if pp is not None else np.nan; ma=polygon_area(mp) if mp is not None else np.nan; area[f'pred_area_q{int(q*100):02d}']=pa; area[f'mc_area_q{int(q*100):02d}']=ma; area[f'area_error_pct_q{int(q*100):02d}']=100*(pa-ma)/max(1e-9,abs(ma)) if np.isfinite(pa) and np.isfinite(ma) else np.nan; area[f'polygon_status_q{int(q*100):02d}']='ok' if (pp is not None and mp is not None) else 'failed'
+    area.update({'seed':seed,'mc_eval':mc_eval}); pd.DataFrame([area]).to_csv(f"{ALL_THETA_FLEX_DIR}/flex_synthesis_seed{seed:03d}_mc{mc_eval}_area_summary.csv",index=False)
+    plot_flex_synthesis_for_seed(seed,mc_eval,pred_polys,mc_polys,support_df,area)
+
+def main_v6_all_theta_train_eval_flex_synthesis():
+    print('[v6-alltheta] start',flush=True)
+    case=build_ieee33_case(); data_dict=get_or_build_flex_dataset_cache(case)
+    Path(ALL_THETA_RESULT_DIR).mkdir(parents=True,exist_ok=True); Path(ALL_THETA_COMPARISON_DIR).mkdir(parents=True,exist_ok=True); Path(ALL_THETA_FLEX_DIR).mkdir(parents=True,exist_ok=True)
+    model_map=train_or_load_all_theta_v7style_models(case,data_dict) if ALL_THETA_TRAIN else load_existing_all_theta_models(case)
+    if ALL_THETA_EVAL:
+        eval_all_theta_multiseed_v7style(case,data_dict,model_map); plot_all_theta_evaluation_results()
+    if ALL_THETA_FLEX_SYNTHESIS:
+        for sd in FLEX_SYNTHESIS_SEEDS: synthesize_flex_domain_for_seed(case,model_map,sd,FLEX_SYNTHESIS_MC)
+    print('[v6-alltheta] done',flush=True)
+
+
+
+
+def apply_v7_1_runtime_config():
+    global NUM_SCENARIOS, MC_PER_SCENARIO, N_THETA, EPOCHS, THETA_LIST
+    global DATASET_CACHE_MODE, ALL_THETA_LIST, ALL_THETA_EVAL_SEEDS, ALL_THETA_EVAL_MC
+    global RUN_FLEX_SYNTHESIS, EVAL_POSTERIOR_SAMPLES, PREDICT_TIMING_REPEAT
+    if SMOKE_TEST:
+        NUM_SCENARIOS=2; MC_PER_SCENARIO=3; N_THETA=12; EPOCHS=2
+        THETA_LIST=np.linspace(0,2*np.pi,N_THETA,endpoint=False); ALL_THETA_LIST=[3]
+        ALL_THETA_EVAL_SEEDS=[1]; ALL_THETA_EVAL_MC=20; RUN_FLEX_SYNTHESIS=False
+        EVAL_POSTERIOR_SAMPLES=10; PREDICT_TIMING_REPEAT=20; DATASET_CACHE_MODE='rebuild'
+    else:
+        NUM_SCENARIOS=1000; MC_PER_SCENARIO=60; N_THETA=12; EPOCHS=340
+        THETA_LIST=np.linspace(0,2*np.pi,N_THETA,endpoint=False); ALL_THETA_LIST=list(range(N_THETA))
+        ALL_THETA_EVAL_SEEDS=[1,2,3]; ALL_THETA_EVAL_MC=800; EVAL_POSTERIOR_SAMPLES=100; PREDICT_TIMING_REPEAT=1000
+        if BUILD_NEW_DATASET: DATASET_CACHE_MODE='rebuild'
+
+def assert_no_old_model_or_cache_paths():
+    for v in [DATASET_CACHE_DIR,DATASET_CACHE_TAG,TRAINING_RESULT_DIR,ALL_THETA_RESULT_DIR,ALL_THETA_COMPARISON_DIR]:
+        if 'no_pcc_branch_limit' not in str(v):
+            raise RuntimeError(f'Path must include no_pcc_branch_limit: {v}')
+
+def print_branch_limit_policy(case):
+    print('[branch-limit-policy]',flush=True)
+    print(f'line_limit_mode = {case.line_limit_mode}',flush=True)
+    print(f'pcc_branch_indices = {case.pcc_branch_indices.tolist()}',flush=True)
+    for l in case.pcc_branch_indices: print(f'pcc branch l{l}: {int(case.from_bus[l])}->{int(case.to_bus[l])}',flush=True)
+    print(f'use_explicit_pcc_limits = {case.use_explicit_pcc_limits}',flush=True)
+    print(f'PCC_P=[{case.pcc_p_min},{case.pcc_p_max}] PCC_Q=[{case.pcc_q_min},{case.pcc_q_max}]',flush=True)
+    print(f'internal fmax_p range=({float(np.min(case.fmax_p[case.internal_branch_mask]))},{float(np.max(case.fmax_p[case.internal_branch_mask]))})',flush=True)
+
+def sanity_check_theta3_no_pcc_cap(case):
+    seed=1; mc=50; theta_idx=3; pd_mu,qd_mu,pr_mu,qr_mu=draw_external_scenario_by_seed(case,seed)
+    ref=build_external_reference_for_theta_given_scenario(case,theta_idx,THETA_LIST,pd_mu,qd_mu,pr_mu,qr_mu,seed,mc)
+    h=np.sort(ref['h_mc']); tol=1e-4; hb=np.round(h/tol)*tol; mass=float(pd.Series(hb).value_counts().max()/max(1,len(h)))
+    df=pd.DataFrame({'h':h}); df.to_csv('branch_limit_sanity_theta03_seed001_mc50.csv',index=False)
+    summ={'seed':seed,'mc':mc,'h_mean':float(np.mean(h)),'h_std':float(np.std(h)),'theta3_h_atom_mass_tol1e-4':mass}
+    pd.DataFrame([summ]).to_csv('branch_limit_sanity_summary.csv',index=False)
+    if mass>0.30: print('theta=3 still has strong atom-like mass; check other binding constraints',flush=True)
+
+def compare_old_vs_new_theta3_distribution(case):
+    old=Path('diagnostics_jump/mc_opf_diag_theta03_seed001_mc2500_clip_samples.csv')
+    if not old.exists():
+        print('[warning] old diagnostics missing, skip compare_old_vs_new',flush=True); return
+    od=pd.read_csv(old); od=od[od['ok']==1]
+    pd_mu,qd_mu,pr_mu,qr_mu=draw_external_scenario_by_seed(case,1)
+    ref=build_external_reference_for_theta_given_scenario(case,3,THETA_LIST,pd_mu,qd_mu,pr_mu,qr_mu,1,2500)
+    nh=np.array(ref['h_mc']); oh=od['h'].values
+    plt.figure(figsize=(7,5));
+    for arr,l in [(oh,'old'),(nh,'new')]:
+        hs=np.sort(arr); c=np.arange(1,len(hs)+1)/len(hs); plt.plot(hs,c,label=l)
+    plt.legend(); plt.tight_layout(); plt.savefig('old_vs_new_theta03_seed001_h_cdf_compare.png',dpi=220); plt.close()
+    tol=1e-4
+    out={'old_max_bin_mass_tol1e-4':float(pd.Series(np.round(oh/tol)*tol).value_counts().max()/len(oh)),'new_max_bin_mass_tol1e-4':float(pd.Series(np.round(nh/tol)*tol).value_counts().max()/len(nh)),'old_max_window_mass_1e-3':np.nan,'new_max_window_mass_1e-3':np.nan,'old_h_mean':float(np.mean(oh)),'new_h_mean':float(np.mean(nh)),'old_h_std':float(np.std(oh)),'new_h_std':float(np.std(nh)),'old_top_active_signature':'unknown','new_top_active_signature':'unknown','old_Qline_pos_l00_active_rate':float((od.get('active_names','').astype(str).str.contains('Qline_pos_l0')).mean()) if 'active_names' in od else np.nan,'new_Qline_pos_l00_active_rate':np.nan}
+    pd.DataFrame([out]).to_csv('old_vs_new_theta03_seed001_h_atom_compare.csv',index=False)
+
+
+def _diag_quantiles(arr, prefix):
+    arr=np.asarray(arr,dtype=float).reshape(-1)
+    out={f'{prefix}_mean':float(np.mean(arr)),f'{prefix}_std':float(np.std(arr)),f'{prefix}_min':float(np.min(arr)),f'{prefix}_max':float(np.max(arr))}
+    for q in DIAG_QUANTILES:
+        out[f'{prefix}_q{int(round(q*100)):02d}']=float(np.quantile(arr,q))
+    return out
+
+def _scalar_norm_value(v):
+    return float(np.asarray(v).reshape(-1)[0])
+
+def _empirical_cdf(values,z_grid):
+    hs=np.sort(np.asarray(values,dtype=float).reshape(-1))
+    return np.searchsorted(hs,z_grid,side='right')/max(1,len(hs))
+
+def build_external_reference_for_theta_given_scenario_with_active(case,theta_idx,theta_list,pd_mu,qd_mu,pr_mu,qr_mu,seed,mc_eval,progress_every=100):
+    np.random.seed(seed+100000+theta_idx)
+    theta=float(theta_list[theta_idx]); alpha=float(np.cos(theta)); beta=float(np.sin(theta))
+    h=[]; p0=[]; q0=[]; xreal=[]; active=[]; infeas=0; t0=time.perf_counter()
+    std_pd=0.10*np.maximum(pd_mu,1e-3); std_pr=0.12*np.maximum(pr_mu,1e-3)
+    for m in range(mc_eval):
+        pdv=pd_mu.copy(); prv=pr_mu.copy()
+        for i in range(case.n_bus):
+            if pd_mu[i]>1e-9:
+                pdv[i]=sample_trunc_normal(pd_mu[i],std_pd[i],0.0,None)
+        for k,b in enumerate(case.pv_buses):
+            prv[b]=sample_trunc_normal(pr_mu[b],std_pr[b],0.0,float(case.pv_pmax[k]))
+        qdv=qd_mu*(pdv/np.maximum(pd_mu,1e-6)); qrv=prv*math.tan(math.acos(case.pv_pf))
+        sol=solve_flex_support_gurobi_33bus(case,pdv,qdv,prv,qrv,alpha,beta,return_detail=True,stabilize_dispatch=STABILIZE_OPF_DISPATCH)
+        if sol.get('ok',False):
+            h.append(float(sol['h'])); p0.append(float(sol['P0'])); q0.append(float(sol['Q0'])); xreal.append(make_feature_vector(case,pdv,prv))
+            sig,act,names=get_active_constraint_signature(case,sol)
+            active.append({'theta_idx':theta_idx,'theta':theta,'seed':seed,'mc_idx':m,'signature':sig,'active_names':act,'active_names_str':';'.join(act)})
+        else:
+            infeas+=1
+        if progress_every and ((m+1)%progress_every==0 or (m+1)==mc_eval):
+            elapsed=time.perf_counter()-t0; eta=elapsed/(m+1)*max(0,mc_eval-m-1)
+            print(f"[targeted-mc-opf] theta_idx={theta_idx:02d} seed={seed:03d} {m+1}/{mc_eval} success={len(h)} infeasible={infeas} elapsed={elapsed:.1f}s eta={eta:.1f}s",flush=True)
+    if len(h)==0:
+        raise RuntimeError(f'all infeasible theta={theta_idx} seed={seed}')
+    opf=time.perf_counter()-t0
+    return {'theta_idx':theta_idx,'theta':theta,'alpha':alpha,'beta':beta,'seed':seed,'mc_eval':mc_eval,'x_mu':make_feature_vector(case,pd_mu,pr_mu),'pd_mu':pd_mu,'qd_mu':qd_mu,'pr_mu':pr_mu,'qr_mu':qr_mu,'h_mc':np.asarray(h),'p0_mc':np.asarray(p0),'q0_mc':np.asarray(q0),'xreal_mc':np.asarray(xreal),'active_records_external':active,'n_success':len(h),'n_infeasible':infeas,'opf_mc_total_time_sec':opf,'opf_per_sample_ms':opf*1000/max(1,mc_eval)}
+
+def run_targeted_mc2500_case(case,data_dict,model_map,theta_idx,seed):
+    Path(TARGETED_DIAG_DIR).mkdir(parents=True,exist_ok=True)
+    pd_mu,qd_mu,pr_mu,qr_mu=draw_external_scenario_by_seed(case,seed)
+    ref=build_external_reference_for_theta_given_scenario_with_active(case,theta_idx,THETA_LIST,pd_mu,qd_mu,pr_mu,qr_mu,seed,DIAG_MC_EVAL,DIAG_PROGRESS_EVERY)
+    h=ref['h_mc']; margin=0.05*(h.max()-h.min()+1e-9); z=np.linspace(h.min()-margin,h.max()+margin,DIAG_CDF_GRID_N)
+    if theta_idx not in model_map or model_map[theta_idx]['net'] is None:
+        raise FileNotFoundError(f"missing data1000_mc60 v7style model for theta_idx={theta_idx}: {model_map.get(theta_idx,{})}")
+    metrics,cdf_pred,p05,p95,cdf_mc=predict_cdf_v7style_on_external_reference(case,theta_idx,ref,z,save_band_plot=False,output_prefix=None,net=model_map[theta_idx]['net'],norm=model_map[theta_idx]['norm'])
+    metrics.update({'h_mc_min':float(np.min(h)),'h_mc_max':float(np.max(h)),'h_mc_mean':float(np.mean(h)),'h_mc_std':float(np.std(h)),'n_success':ref['n_success'],'n_infeasible':ref['n_infeasible'],'opf_per_sample_ms':ref['opf_per_sample_ms'],'model_path':model_map[theta_idx]['model_path']})
+    fig=f"{TARGETED_DIAG_DIR}/CDF_theta{theta_idx:02d}_seed{seed:03d}_mc{DIAG_MC_EVAL}_targeted.png"
+    plt.figure(figsize=(7,5),dpi=180); plt.plot(z,cdf_mc,'k-',lw=2,label='External MC-OPF empirical CDF'); plt.plot(z,cdf_pred,'r--',lw=2,label='BPINN deterministic GMM CDF'); plt.fill_between(z,p05,p95,color='#93c5fd',alpha=0.42,label='posterior CDF 5-95%')
+    plt.title(f"theta={theta_idx:02d} seed={seed:03d} MC={DIAG_MC_EVAL} ARMS={metrics['external_cdf_arms']:.3f} q50err={metrics['q50_error']:.4f}"); plt.legend(); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(fig,dpi=220); plt.close()
+    metrics['plot_path']=fig
+    pd.DataFrame([metrics]).to_csv(f"{TARGETED_DIAG_DIR}/targeted_metrics_theta{theta_idx:02d}_seed{seed:03d}_mc{DIAG_MC_EVAL}.csv",index=False)
+    return metrics,ref
+
+def compare_targeted_mc2500_with_existing_mc800(targeted_rows):
+    src=Path(ALL_THETA_COMPARISON_DIR)/'all_theta_multiseed_external_by_theta_seed.csv'
+    out=[]
+    old=pd.read_csv(src) if src.exists() else pd.DataFrame()
+    if old.empty:
+        print(f"[targeted-warning] missing existing MC800 summary: {src}",flush=True)
+    for r in targeted_rows:
+        theta_idx=int(r['theta_idx']); seed=int(r['seed']); m=old[(old.get('theta_idx',pd.Series(dtype=int))==theta_idx)&(old.get('seed',pd.Series(dtype=int))==seed)] if not old.empty else pd.DataFrame()
+        oldr=m.iloc[0] if len(m)>0 else pd.Series(dtype=float)
+        arms800=float(oldr.get('external_cdf_arms',np.nan)); arms2500=float(r.get('external_cdf_arms',np.nan))
+        if np.isfinite(arms800) and abs(arms2500-arms800)<=1.0:
+            conclusion='MC800 result is stable; error is likely model/location bias.'
+        elif np.isfinite(arms800) and arms2500 < arms800-2.0:
+            conclusion='MC800 finite-sample noise contributed significantly.'
+        elif np.isfinite(arms800):
+            conclusion='Partial MC effect; model bias still likely.'
+        else:
+            conclusion='Existing MC800 result missing; cannot compare finite-sample effect.'
+        out.append({'theta_idx':theta_idx,'seed':seed,'arms_mc800':arms800,'arms_mc2500':arms2500,'delta_arms_2500_minus_800':arms2500-arms800 if np.isfinite(arms800) else np.nan,'q50_error_mc800':oldr.get('q50_error',np.nan),'q50_error_mc2500':r.get('q50_error',np.nan),'delta_q50_error':r.get('q50_error',np.nan)-oldr.get('q50_error',np.nan) if np.isfinite(oldr.get('q50_error',np.nan)) else np.nan,'q05_error_mc800':oldr.get('q05_error',np.nan),'q05_error_mc2500':r.get('q05_error',np.nan),'q95_error_mc800':oldr.get('q95_error',np.nan),'q95_error_mc2500':r.get('q95_error',np.nan),'h_mc_std_mc800':oldr.get('h_mc_std',np.nan),'h_mc_std_mc2500':r.get('h_mc_std',np.nan),'conclusion':conclusion})
+    df=pd.DataFrame(out); df.to_csv(f"{TARGETED_DIAG_DIR}/targeted_mc2500_vs_mc800_summary.csv",index=False); return df
+
+def compute_nearest_training_scenarios(XMU,x_mu_ext,k_list=(20,50)):
+    X=np.asarray(XMU,dtype=float); x=np.asarray(x_mu_ext,dtype=float).reshape(1,-1)
+    xm=X.mean(axis=0,keepdims=True); xs=X.std(axis=0,keepdims=True)+1e-9
+    dist=np.linalg.norm((X-xm)/xs-(x-xm)/xs,axis=1); order=np.argsort(dist)
+    pd_sum=X[:,-2]; pv_sum=X[:,-1]; net=pd_sum-pv_sum; epd=float(x[0,-2]); epv=float(x[0,-1]); enet=epd-epv
+    pct=lambda a,v: float(100.0*np.mean(a<=v))
+    stats={'external_pd_sum':epd,'external_pv_sum':epv,'external_net_load':enet,'external_pd_sum_percentile':pct(pd_sum,epd),'external_pv_sum_percentile':pct(pv_sum,epv),'external_net_load_percentile':pct(net,enet)}
+    return {int(k):{'nearest_idx':order[:int(k)],'nearest_dist':dist[order[:int(k)]]} for k in k_list},stats
+
+def _prediction_quantiles_for_ref(model_entry,ref):
+    norm=model_entry['norm']; net=model_entry['net']; x=(ref['x_mu'].reshape(1,-1)-norm['x_mu_mean'])/norm['x_mu_std']; xt=torch.tensor(x,dtype=torch.float32,device=DEVICE)
+    with torch.no_grad(): _,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
+    w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1); hm=_scalar_norm_value(norm['h_mean']); hs=_scalar_norm_value(norm['h_std'])
+    return {f'pred_q{int(round(q*100)):02d}':float(hm+hs*float(np.asarray(gmm_quantile(q,w,mu,sigma)).reshape(-1)[0])) for q in DIAG_QUANTILES},w,mu,sigma,hm,hs
+
+def _active_counter_rows(source,records,total,top_k=10):
+    from collections import Counter
+    labels=[]
+    for r in records:
+        an=r.get('active_names',r.get('active_names_str',''))
+        if isinstance(an,list): labels.append(';'.join(an))
+        else: labels.append(str(an))
+    cnt=Counter(labels); rows=[]
+    for rank,(names,count) in enumerate(cnt.most_common(top_k),1):
+        rows.append({'source':source,'rank':rank,'count':int(count),'percentage':float(100*count/max(1,total)),'active_names':names})
+    return rows
+
+def summarize_active_patterns_for_indices(active_records,scenario_indices,theta_idx,mc_per_scenario,n_theta,top_k=10,external_records=None,output_path=None):
+    train=[]; scenario_set=set(int(i) for i in scenario_indices)
+    for r in active_records:
+        if int(r.get('theta_idx',-1))==int(theta_idx) and int(r.get('scenario_idx',-999999)) in scenario_set:
+            train.append(r)
+    if not train:
+        for si in scenario_indices:
+            for mi in range(mc_per_scenario):
+                idx=(int(si)*mc_per_scenario+mi)*n_theta+theta_idx
+                if 0 <= idx < len(active_records): train.append(active_records[idx])
+    rows=[]; rows.extend(_active_counter_rows('external_mc2500',external_records or [],len(external_records or []),top_k)); rows.extend(_active_counter_rows(f'nearest_train_k{len(scenario_indices)}',train,len(train),top_k))
+    df=pd.DataFrame(rows)
+    if output_path: df.to_csv(output_path,index=False)
+    ext_top=df[df['source']=='external_mc2500']['active_names'].iloc[0] if len(df[df['source']=='external_mc2500']) else ''
+    tr_top=df[df['source'].str.startswith('nearest_train')]['active_names'].iloc[0] if len(df[df['source'].str.startswith('nearest_train')]) else ''
+    match=bool(ext_top==tr_top and ext_top!='')
+    concl='Top active pattern is covered by nearest training scenarios.' if match else 'Active constraint pattern mismatch; critical-region coverage may be insufficient.'
+    return df,match,concl
+
+def summarize_nearest_training_coverage(case,data_dict,theta_idx,seed,ref,model_map,k_list=DIAG_K_LIST):
+    XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active_records,all_names=data_dict
+    near,stats=compute_nearest_training_scenarios(XMU,ref['x_mu'],k_list)
+    predq,w,mu,sigma,hm,hs=_prediction_quantiles_for_ref(model_map[theta_idx],ref)
+    rows=[]; extq=_diag_quantiles(ref['h_mc'],'ext')
+    h=ref['h_mc']; margin=0.05*(h.max()-h.min()+1e-9); z=np.linspace(h.min()-margin,h.max()+margin,DIAG_CDF_GRID_N); cdf_ext=_empirical_cdf(h,z)
+    cdf_pred=gmm_cdf((z-hm)/(hs+1e-9),w,mu,sigma)
+    for K,obj in near.items():
+        idx=obj['nearest_idx']; dist=obj['nearest_dist']; hnear=YH[idx,:,theta_idx].reshape(-1); nearq=_diag_quantiles(hnear,'near')
+        detail=[]
+        for rank,(si,dv) in enumerate(zip(idx,dist),1):
+            ht=YH[si,:,theta_idx].reshape(-1)
+            detail.append({'rank':rank,'scenario_idx':int(si),'distance':float(dv),'pd_sum':float(XMU[si,-2]),'pv_sum':float(XMU[si,-1]),'net_load':float(XMU[si,-2]-XMU[si,-1]),'h_train_mean':float(np.mean(ht)),'h_train_std':float(np.std(ht)),'h_train_q05':float(np.quantile(ht,0.05)),'h_train_q50':float(np.quantile(ht,0.5)),'h_train_q95':float(np.quantile(ht,0.95))})
+        pd.DataFrame(detail).to_csv(f"{TARGETED_DIAG_DIR}/nearest_detail_theta{theta_idx:02d}_seed{seed:03d}_k{K}.csv",index=False)
+        active_df,active_match,active_concl=summarize_active_patterns_for_indices(active_records,idx,theta_idx,MC_PER_SCENARIO,N_THETA,top_k=10,external_records=ref['active_records_external'],output_path=f"{TARGETED_DIAG_DIR}/active_pattern_compare_theta{theta_idx:02d}_seed{seed:03d}_k{K}.csv")
+        near_minus_ext_q50=nearq['near_q50']-extq['ext_q50']; pred_minus_ext_q50=predq['pred_q50']-extq['ext_q50']
+        if abs(near_minus_ext_q50)>0.03 and np.sign(near_minus_ext_q50)==np.sign(pred_minus_ext_q50): cov='Nearest training distribution is also shifted; local training coverage may be insufficient.'
+        elif abs(near_minus_ext_q50)<=0.02 and abs(pred_minus_ext_q50)>0.03: cov='Nearest training distribution matches external MC; model/calibration bias is likely.'
+        elif float(np.min(dist))>5.0 or stats['external_pv_sum_percentile']>95 or stats['external_net_load_percentile']<5: cov='External scenario is near edge of training distribution.'
+        else: cov='Mixed evidence.'
+        row={'theta_idx':theta_idx,'seed':seed,'K':K,'nearest_dist_min':float(np.min(dist)),'nearest_dist_mean':float(np.mean(dist)),'nearest_dist_max':float(np.max(dist)),**stats,**extq,**nearq,**predq,'pred_minus_ext_q50':pred_minus_ext_q50,'near_minus_ext_q50':near_minus_ext_q50,'pred_minus_near_q50':predq['pred_q50']-nearq['near_q50'],'pred_minus_ext_q05':predq['pred_q05']-extq['ext_q05'],'near_minus_ext_q05':nearq['near_q05']-extq['ext_q05'],'pred_minus_ext_q95':predq['pred_q95']-extq['ext_q95'],'near_minus_ext_q95':nearq['near_q95']-extq['ext_q95'],'active_top1_match':active_match,'active_conclusion':active_concl,'coverage_conclusion':cov}
+        rows.append(row)
+        cdf_near=_empirical_cdf(hnear,z); arms=float(np.sqrt(np.mean((cdf_pred-cdf_ext)**2))*100)
+        plt.figure(figsize=(7,5),dpi=180); plt.plot(z,cdf_ext,'k-',lw=2,label='external MC2500 empirical'); plt.plot(z,cdf_near,color='green',lw=2,label=f'nearest train K={K} empirical'); plt.plot(z,cdf_pred,'r--',lw=2,label='BPINN deterministic')
+        plt.title(f"theta={theta_idx:02d} seed={seed:03d} K={K} ARMS={arms:.3f} pred-ext q50={pred_minus_ext_q50:.4f} near-ext q50={near_minus_ext_q50:.4f}"); plt.legend(); plt.grid(alpha=0.2); plt.tight_layout(); plt.savefig(f"{TARGETED_DIAG_DIR}/nearest_cdf_theta{theta_idx:02d}_seed{seed:03d}_k{K}.png",dpi=220); plt.close()
+    return rows
+
+
+def get_lambda_scen_q(epoch):
+    if epoch < SCEN_Q_START_EPOCH_B:
+        return LAM_SCEN_Q_A
+    if epoch < SCEN_Q_START_EPOCH_C:
+        return LAM_SCEN_Q_B
+    if epoch < SCEN_Q_START_EPOCH_D:
+        return LAM_SCEN_Q_C
+    return LAM_SCEN_Q_D
+
+def precompute_single_theta_scenario_distribution_stats(YH, theta_idx, taus):
+    """
+    YH shape = (N, M, T).  For one theta, compute empirical scenario-level
+    h_theta quantiles, means, and standard deviations across the M MC realizations.
+    """
+    h=YH[:,:,theta_idx]
+    q_emp=np.quantile(h,np.asarray(taus,dtype=float),axis=1).T
+    mean_emp=h.mean(axis=1,keepdims=True)
+    std_emp=h.std(axis=1,keepdims=True)
+    return q_emp.astype(np.float32),mean_emp.astype(np.float32),std_emp.astype(np.float32)
+
+def scenario_quantile_moment_calibration_loss(net,xmu_scen_raw,scenario_indices,q_emp,mean_emp,std_emp,x_mu_mean,x_mu_std,h_mean,h_std,taus,q_weights,sample=True):
+    if not torch.is_tensor(scenario_indices):
+        scenario_indices=torch.as_tensor(scenario_indices,device=DEVICE,dtype=torch.long)
+    scenario_indices=torch.unique(scenario_indices.detach().long())
+    if scenario_indices.numel()==0:
+        z=torch.tensor(0.0,device=DEVICE)
+        return z,z,z
+    if scenario_indices.numel()>SCENARIO_CALIB_BATCH_MAX_SCENARIOS:
+        perm=torch.randperm(scenario_indices.numel(),device=scenario_indices.device)[:SCENARIO_CALIB_BATCH_MAX_SCENARIOS]
+        scenario_indices=scenario_indices[perm]
+    ids_np=scenario_indices.detach().cpu().numpy().astype(int)
+    x=((xmu_scen_raw[ids_np]-x_mu_mean)/x_mu_std).astype(np.float32)
+    xt=torch.tensor(x,dtype=torch.float32,device=DEVICE)
+    _,w,mu,sigma=net.forward_gmm_single(xt,sample=sample)
+    q_pred=gmm_quantile_torch(w,mu,sigma,taus)
+    q_emp_norm=(q_emp[ids_np]-float(np.asarray(h_mean).reshape(-1)[0]))/(float(np.asarray(h_std).reshape(-1)[0])+1e-9)
+    mean_emp_norm=(mean_emp[ids_np]-float(np.asarray(h_mean).reshape(-1)[0]))/(float(np.asarray(h_std).reshape(-1)[0])+1e-9)
+    std_emp_norm=std_emp[ids_np]/(float(np.asarray(h_std).reshape(-1)[0])+1e-9)
+    qe=torch.tensor(q_emp_norm,dtype=torch.float32,device=DEVICE)
+    me=torch.tensor(mean_emp_norm,dtype=torch.float32,device=DEVICE)
+    se=torch.tensor(std_emp_norm,dtype=torch.float32,device=DEVICE)
+    qw=torch.tensor(q_weights,dtype=torch.float32,device=DEVICE).view(1,-1)
+    scen_q_loss=(qw*(q_pred-qe).pow(2)).mean()
+    mix_mean=(w*mu).sum(dim=1,keepdim=True)
+    mix_var=(w*(sigma.pow(2)+mu.pow(2))).sum(dim=1,keepdim=True)-mix_mean.pow(2)
+    mix_std=torch.sqrt(torch.clamp(mix_var,min=1e-12))
+    scen_mean_loss=(mix_mean-me).pow(2).mean()
+    scen_std_loss=(mix_std-se).pow(2).mean()
+    return scen_q_loss,scen_mean_loss,scen_std_loss
+
+def _scenario_calib_eval_metrics(net,XMU,scenario_ids,q_emp,mean_emp,std_emp,norm):
+    if len(scenario_ids)==0:
+        return {'scen_q_rmse':np.nan,'scen_q50_rmse':np.nan,'scen_mean_rmse':np.nan,'scen_std_rmse':np.nan}
+    ids=np.unique(np.asarray(scenario_ids,dtype=int))
+    x=((XMU[ids]-norm['x_mu_mean'])/norm['x_mu_std']).astype(np.float32)
+    xt=torch.tensor(x,dtype=torch.float32,device=DEVICE)
+    with torch.no_grad(): _,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
+    q_pred=gmm_quantile_torch(w,mu,sigma,SCENARIO_Q_TAUS).detach().cpu().numpy()
+    hm=float(np.asarray(norm['h_mean']).reshape(-1)[0]); hs=float(np.asarray(norm['h_std']).reshape(-1)[0])
+    q_emp_norm=(q_emp[ids]-hm)/(hs+1e-9)
+    mean_emp_norm=(mean_emp[ids]-hm)/(hs+1e-9); std_emp_norm=std_emp[ids]/(hs+1e-9)
+    mix_mean=(w*mu).sum(dim=1,keepdim=True).detach().cpu().numpy()
+    mix_var=(w*(sigma.pow(2)+mu.pow(2))).sum(dim=1,keepdim=True)-((w*mu).sum(dim=1,keepdim=True)).pow(2)
+    mix_std=torch.sqrt(torch.clamp(mix_var,min=1e-12)).detach().cpu().numpy()
+    qerr=q_pred-q_emp_norm
+    q50_idx=list(SCENARIO_Q_TAUS).index(0.50)
+    return {'scen_q_rmse':float(np.sqrt(np.mean(qerr**2))),'scen_q50_rmse':float(np.sqrt(np.mean(qerr[:,q50_idx]**2))),'scen_mean_rmse':float(np.sqrt(np.mean((mix_mean-mean_emp_norm)**2))),'scen_std_rmse':float(np.sqrt(np.mean((mix_std-std_emp_norm)**2)))}
+
+def train_single_theta_v7style_model_with_qcal(case,data_dict,theta_idx):
+    XMU,XREAL,THETA_FEAT,YH,YP0,YQ0,YPG,YQG,active_records,all_names=data_dict
+    Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True); Path(ALL_THETA_RESULT_DIR).mkdir(parents=True,exist_ok=True)
+    d=flatten_single_theta_dataset_v7style(XMU,XREAL,YH,YP0,YQ0,YPG,YQG,theta_idx,THETA_LIST)
+    N,M=YH.shape[0],YH.shape[1]
+    scenario_ids=np.repeat(np.arange(N),M)
+    rng=np.random.default_rng(SEED_TRAIN+theta_idx); perm=rng.permutation(N); n_val=max(1,int(round(0.1*N))); va=perm[-n_val:]; tr=perm[:-n_val]
+    trm=np.isin(scenario_ids,tr); vam=np.isin(scenario_ids,va)
+    xmu_tr=d['xmu_flat'][trm]; yh_tr=d['yh_flat'][trm]; yt_tr=d['yt_flat'][trm]; ypg_tr=d['ypg_flat'][trm]; yqg_tr=d['yqg_flat'][trm]; sid_tr=scenario_ids[trm]
+    xmu_va=d['xmu_flat'][vam]; yh_va=d['yh_flat'][vam]; sid_va=scenario_ids[vam]
+    norm={'x_mu_mean':xmu_tr.mean(0,keepdims=True),'x_mu_std':xmu_tr.std(0,keepdims=True)+1e-9,'h_mean':np.array([[yh_tr.mean()]]),'h_std':np.array([[yh_tr.std()+1e-9]]),'t_mean':np.array([[yt_tr.mean()]]),'t_std':np.array([[yt_tr.std()+1e-9]]),'alpha':d['alpha'],'beta':d['beta'],'theta':d['theta'],'theta_idx':theta_idx,'scenario_quantile_calibration':True}
+    q_emp,mean_emp,std_emp=precompute_single_theta_scenario_distribution_stats(YH,theta_idx,SCENARIO_Q_TAUS)
+    to=lambda a: torch.tensor(a,dtype=torch.float32,device=DEVICE)
+    xmu_n=to((xmu_tr-norm['x_mu_mean'])/norm['x_mu_std']); xmu_raw=to(xmu_tr); yh=to(yh_tr); yt=to(yt_tr); ypg=to(ypg_tr); yqg=to(yqg_tr); hm,hs,tm,ts=to(norm['h_mean']),to(norm['h_std']),to(norm['t_mean']),to(norm['t_std']); sid_t=torch.tensor(sid_tr,dtype=torch.long,device=DEVICE)
+    net=BayesSingleThetaV7StyleGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE)
+    opt=torch.optim.Adam(net.parameters(),lr=LR)
+    n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; rows=[]; best=np.inf; best_path=f"{TRAINING_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style_qcal_best_model.pt"
+    print('[v7.4-qcal-train-start]',flush=True); print(f'theta_idx = {theta_idx}',flush=True); print('loss_old = nll + LAM_T_SUP*t_sup + LAM_DISPATCH_SUP*disp + LAM_PHYS_FLEX*phys + beta_kl*kl',flush=True)
+    for ep in range(EPOCHS):
+        p=np.random.default_rng(SEED_TRAIN+ep+theta_idx*1000).permutation(n); beta_kl=min(1.0,(ep+1)/max(1,KL_WARMUP_EPOCHS))*BETA_KL_MAX; lambda_q=get_lambda_scen_q(ep)
+        st={k:0.0 for k in ['total','nll','t_sup','dispatch','phys','kl','scen_q','scen_mean','scen_std']}
+        for b in range(nb):
+            ii=p[b*BATCH_SIZE:min((b+1)*BATCH_SIZE,n)]
+            hf,w,mu,sigma=net.forward_gmm_single(xmu_n[ii],sample=True); hnorm=(yh[ii]-hm)/(hs+1e-9); nll=(-gmm_log_prob(hnorm,w,mu,sigma)).mean(); t_hat,pg_hat,qg_hat=net.recover_dispatch_from_h(hf,yh[ii],hm,hs,tm,ts,sample=True)
+            t_sup=(t_hat-yt[ii]).pow(2).mean(); disp=(pg_hat-ypg[ii]).pow(2).mean()+(qg_hat-yqg[ii]).pow(2).mean(); taus=make_v7style_physics_taus(True,xmu_n.device,xmu_n.dtype); hq_n=gmm_quantile_torch(w,mu,sigma,taus); hq=hm+hs*hq_n
+            tq=[]; pgq=[]; qgq=[]
+            for k in range(taus.numel()):
+                tk,pgk,qgk=net.recover_dispatch_from_h(hf,hq[:,k:k+1],hm,hs,tm,ts,sample=True); tq.append(tk); pgq.append(pgk); qgq.append(qgk)
+            tq=torch.cat(tq,dim=1); pgq=torch.stack(pgq,dim=1); qgq=torch.stack(qgq,dim=1)
+            phys=physics_loss_flex_quantile_v7style(case,xmu_raw[ii],hq,tq,pgq,qgq,d['alpha'],d['beta']); kl=net.kl_divergence()/max(1,n)
+            if USE_SCENARIO_QUANTILE_CALIBRATION or USE_SCENARIO_MOMENT_CALIBRATION:
+                scen_q,scen_mean,scen_std=scenario_quantile_moment_calibration_loss(net,XMU,sid_t[ii],q_emp,mean_emp,std_emp,norm['x_mu_mean'],norm['x_mu_std'],norm['h_mean'],norm['h_std'],SCENARIO_Q_TAUS,SCENARIO_Q_WEIGHTS,sample=True)
+            else:
+                scen_q=scen_mean=scen_std=torch.tensor(0.0,device=DEVICE)
+            loss_old=nll+LAM_T_SUP*t_sup+LAM_DISPATCH_SUP*disp+LAM_PHYS_FLEX*phys+beta_kl*kl
+            loss=loss_old+lambda_q*scen_q+(LAM_SCEN_MEAN*scen_mean if USE_SCENARIO_MOMENT_CALIBRATION else 0.0)+(LAM_SCEN_STD*scen_std if USE_SCENARIO_MOMENT_CALIBRATION else 0.0)
+            opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(net.parameters(),5.0); opt.step()
+            vals=[loss,nll,t_sup,disp,phys,kl,scen_q,scen_mean,scen_std]
+            for key,val in zip(st.keys(),vals): st[key]+=float(val.detach().cpu())
+        for key in st: st[key]/=max(1,nb)
+        train_cal=_scenario_calib_eval_metrics(net,XMU,tr,q_emp,mean_emp,std_emp,norm); val_cal=_scenario_calib_eval_metrics(net,XMU,va,q_emp,mean_emp,std_emp,norm)
+        val_nll=np.nan
+        if len(xmu_va)>0:
+            with torch.no_grad(): _,wv,mv,sv=net.forward_gmm_single(to((xmu_va-norm['x_mu_mean'])/norm['x_mu_std']),sample=False); val_nll=float((-gmm_log_prob((to(yh_va)-hm)/(hs+1e-9),wv,mv,sv)).mean().cpu())
+        row={'epoch':ep+1,'theta_idx':theta_idx,'total_loss':st['total'],'nll':st['nll'],'t_sup':st['t_sup'],'dispatch':st['dispatch'],'phys':st['phys'],'kl':st['kl'],'beta_kl':beta_kl,'lambda_q':lambda_q,'scen_q_loss':st['scen_q'],'scen_mean_loss':st['scen_mean'],'scen_std_loss':st['scen_std'],'train_scen_q_rmse':train_cal['scen_q_rmse'],'train_scen_q50_rmse':train_cal['scen_q50_rmse'],'train_scen_mean_rmse':train_cal['scen_mean_rmse'],'train_scen_std_rmse':train_cal['scen_std_rmse'],'val_nll':val_nll,'val_scen_q_rmse':val_cal['scen_q_rmse'],'val_scen_q50_rmse':val_cal['scen_q50_rmse'],'val_scen_mean_rmse':val_cal['scen_mean_rmse'],'val_scen_std_rmse':val_cal['scen_std_rmse']}
+        rows.append(row)
+        score=row['val_scen_q50_rmse'] if np.isfinite(row['val_scen_q50_rmse']) else row['total_loss']
+        if score<best:
+            best=score; torch.save(net.state_dict(),best_path)
+        print(f"[v7.4-qcal] theta={theta_idx:02d} epoch {ep+1}/{EPOCHS} total={st['total']:.4f} nll={st['nll']:.4f} t={st['t_sup']:.4f} disp={st['dispatch']:.4f} phys={st['phys']:.4f} kl={st['kl']:.4f} scen_q={st['scen_q']:.4f} scen_mean={st['scen_mean']:.4f} scen_std={st['scen_std']:.4f} beta_kl={beta_kl:.4f} lambda_q={lambda_q:.4f}",flush=True)
+    tag=f"theta_independent_theta{theta_idx:02d}_v7style_qcal"
+    last_path=f"{TRAINING_RESULT_DIR}/{tag}_last_model.pt"; torch.save(net.state_dict(),last_path)
+    norm_path=f"{TRAINING_RESULT_DIR}/{tag}_norm.pkl"; pickle.dump(norm,open(norm_path,'wb'))
+    cfg={'theta_idx':theta_idx,'theta':d['theta'],'alpha':d['alpha'],'beta':d['beta'],'USE_SCENARIO_QUANTILE_CALIBRATION':USE_SCENARIO_QUANTILE_CALIBRATION,'SCENARIO_Q_TAUS':SCENARIO_Q_TAUS,'SCENARIO_Q_WEIGHTS':SCENARIO_Q_WEIGHTS,'LAM_SCEN_Q_A':LAM_SCEN_Q_A,'LAM_SCEN_Q_B':LAM_SCEN_Q_B,'LAM_SCEN_Q_C':LAM_SCEN_Q_C,'LAM_SCEN_Q_D':LAM_SCEN_Q_D,'USE_SCENARIO_MOMENT_CALIBRATION':USE_SCENARIO_MOMENT_CALIBRATION,'LAM_SCEN_MEAN':LAM_SCEN_MEAN,'LAM_SCEN_STD':LAM_SCEN_STD,'loss_old':'nll + LAM_T_SUP*t_sup + LAM_DISPATCH_SUP*disp + LAM_PHYS_FLEX*phys + beta_kl*kl'}
+    cfg_path=f"{TRAINING_RESULT_DIR}/{tag}_config.json"; json.dump(cfg,open(cfg_path,'w'),indent=2)
+    pd.DataFrame(rows).to_csv(f"{TRAINING_RESULT_DIR}/training_log_qcal_theta{theta_idx:02d}.csv",index=False)
+    for ext,src in [('model.pt',best_path),('norm.pkl',norm_path),('config.json',cfg_path)]:
+        dst=Path(ALL_THETA_RESULT_DIR)/f"theta_independent_theta{theta_idx:02d}_v7style_{ext}"
+        shutil.copy2(src,dst)
+    return net,norm,{'model_path':best_path,'norm_path':norm_path,'config_path':cfg_path}
+
+def load_qcal_model_map(case):
+    mp={}
+    for j in HARD_THETA_LIST:
+        m=Path(ALL_THETA_RESULT_DIR)/f"theta_independent_theta{j:02d}_v7style_model.pt"; n=Path(ALL_THETA_RESULT_DIR)/f"theta_independent_theta{j:02d}_v7style_norm.pkl"
+        if m.exists() and n.exists():
+            norm=pickle.load(open(n,'rb')); net=BayesSingleThetaV7StyleGMM2SupportNet(norm['x_mu_mean'].shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE); net.load_state_dict(torch.load(m,map_location=DEVICE)); net.eval(); mp[j]={'net':net,'norm':norm,'model_path':str(m),'status':'loaded'}
+        else:
+            mp[j]={'net':None,'norm':None,'model_path':str(m),'status':'missing_model'}
+    return mp
+
+def run_qcal_only_targeted_mc2500_eval(case,data_dict):
+    Path(TARGETED_DIAG_DIR).mkdir(parents=True,exist_ok=True)
+    model_map=load_qcal_model_map(case); rows=[]
+    for theta_idx,seed in DIAG_TARGET_PAIRS:
+        if theta_idx not in HARD_THETA_LIST:
+            continue
+        row,ref=run_targeted_mc2500_case(case,data_dict,model_map,theta_idx,seed); rows.append(row)
+        src=Path(f"{TARGETED_DIAG_DIR}/CDF_theta{theta_idx:02d}_seed{seed:03d}_mc{DIAG_MC_EVAL}_targeted.png")
+        if src.exists(): shutil.copy2(src,Path(TARGETED_DIAG_DIR)/f"qcal_CDF_theta{theta_idx:02d}_seed{seed:03d}_mc{DIAG_MC_EVAL}.png")
+    df=pd.DataFrame(rows); df.to_csv(f"{TARGETED_DIAG_DIR}/qcal_only_targeted_mc2500_metrics_by_pair.csv",index=False)
+    old_path=Path('diagnostics_no_pcc_data1000_mc60_targeted/targeted_mc2500_metrics_by_pair.csv')
+    old=pd.read_csv(old_path) if old_path.exists() else pd.DataFrame(); comp=[]
+    for _,r in df.iterrows():
+        theta_idx=int(r['theta_idx']); seed=int(r['seed']); oldr=old[(old.get('theta_idx',pd.Series(dtype=int))==theta_idx)&(old.get('seed',pd.Series(dtype=int))==seed)] if not old.empty else pd.DataFrame(); o=oldr.iloc[0] if len(oldr)>0 else pd.Series(dtype=float)
+        old_arms=float(o.get('external_cdf_arms',np.nan)); new_arms=float(r.get('external_cdf_arms',np.nan)); old_q50=float(o.get('q50_error',np.nan)); new_q50=float(r.get('q50_error',np.nan))
+        if np.isfinite(old_arms) and new_arms < old_arms-2.0: concl='quantile calibration significantly improves this case'
+        elif new_arms>5.0: concl='remaining error is still large; likely needs hard-region data augmentation or realization-conditioned physics'
+        elif np.isfinite(old_q50) and abs(new_q50)<abs(old_q50)-0.02 and new_arms>3.0: concl='location bias improved but shape/tail mismatch remains'
+        else: concl='mixed result'
+        comp.append({'theta_idx':theta_idx,'seed':seed,'old_arms_mc2500':old_arms,'new_arms_mc2500':new_arms,'delta_arms':new_arms-old_arms if np.isfinite(old_arms) else np.nan,'old_q05_error':o.get('q05_error',np.nan),'new_q05_error':r.get('q05_error',np.nan),'old_q50_error':old_q50,'new_q50_error':new_q50,'old_q95_error':o.get('q95_error',np.nan),'new_q95_error':r.get('q95_error',np.nan),'old_band_coverage':o.get('band_coverage_grid',np.nan),'new_band_coverage':r.get('band_coverage_grid',np.nan),'conclusion':concl})
+    pd.DataFrame(comp).to_csv(f"{TARGETED_DIAG_DIR}/qcal_only_vs_old_targeted_mc2500_summary.csv",index=False)
+    return df
+
+
+def check_qcal_alltheta_model_completeness():
+    rows=[]; missing=[]
+    Path(ALL_THETA_COMPARISON_DIR).mkdir(parents=True,exist_ok=True)
+    for theta_idx in ALL_THETA_LIST:
+        model_path=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style_model.pt")
+        norm_path=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style_norm.pkl")
+        config_path=Path(f"{ALL_THETA_RESULT_DIR}/theta_independent_theta{theta_idx:02d}_v7style_config.json")
+        ok=model_path.exists() and norm_path.exists()
+        rows.append({'theta_idx':theta_idx,'model_exists':model_path.exists(),'norm_exists':norm_path.exists(),'config_exists':config_path.exists(),'ok':ok,'model_path':str(model_path)})
+        if not ok: missing.append(theta_idx)
+    out=f"{ALL_THETA_COMPARISON_DIR}/qcal_alltheta_model_completeness.csv"
+    pd.DataFrame(rows).to_csv(out,index=False)
+    print(f"[v7.4-qcal-only] model completeness CSV = {out}",flush=True)
+    print(f"[v7.4-qcal-only] missing theta list = {missing}",flush=True)
+    if missing:
+        raise RuntimeError(f"Missing qcal all-theta models for theta={missing}")
+    print('[v7.4-qcal-only] all 12 qcal theta models are complete',flush=True)
+    return rows
+
+def write_qcal_alltheta_external_summary_aliases():
+    src=Path(ALL_THETA_COMPARISON_DIR)/'all_theta_multiseed_external_by_theta_seed.csv'
+    if not src.exists():
+        print(f"[v7.4-qcal-only-warning] all-theta by-theta-seed CSV missing: {src}",flush=True)
+        return
+    df=pd.read_csv(src)
+    if df.empty:
+        return
+    theta_summary=[]
+    for theta_idx,g in df.groupby('theta_idx'):
+        arms=g['external_cdf_arms'].astype(float)
+        theta_summary.append({'theta_idx':int(theta_idx),'n_seeds':int(len(g)),'mean_arms':float(arms.mean()),'median_arms':float(arms.median()),'max_arms':float(arms.max()),'min_arms':float(arms.min()),'q90_arms':float(arms.quantile(0.9)),'std_arms':float(arms.std(ddof=0)),'mean_q50_abs_error':float(g['q50_error'].abs().mean()) if 'q50_error' in g else np.nan,'mean_q95_abs_error':float(g['q95_error'].abs().mean()) if 'q95_error' in g else np.nan,'mean_band_coverage_grid':float(g['band_coverage_grid'].mean()) if 'band_coverage_grid' in g else np.nan,'mean_band_width':float(g['mean_band_width'].mean()) if 'mean_band_width' in g else np.nan,'mean_opf_per_sample_ms':float(g['opf_per_sample_ms'].mean()) if 'opf_per_sample_ms' in g else np.nan,'mean_nn_forward_ms':float(g['nn_forward_mean_ms'].mean()) if 'nn_forward_mean_ms' in g else np.nan})
+    pd.DataFrame(theta_summary).to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_multiseed_external_by_theta_summary.csv",index=False)
+    seed_summary=[]
+    for seed,g in df.groupby('seed'):
+        arms=g['external_cdf_arms'].astype(float); imax=arms.idxmax()
+        seed_summary.append({'seed':int(seed),'n_theta':int(len(g)),'mean_arms':float(arms.mean()),'median_arms':float(arms.median()),'max_arms':float(arms.max()),'min_arms':float(arms.min()),'q90_arms':float(arms.quantile(0.9)),'std_arms':float(arms.std(ddof=0)),'worst_theta_idx':int(df.loc[imax,'theta_idx']),'worst_theta_arms':float(df.loc[imax,'external_cdf_arms'])})
+    pd.DataFrame(seed_summary).to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_multiseed_external_by_seed_summary.csv",index=False)
+    overall={'n_rows':int(len(df)),'n_theta':int(df['theta_idx'].nunique()),'n_seeds':int(df['seed'].nunique()),'mean_arms':float(df['external_cdf_arms'].mean()),'median_arms':float(df['external_cdf_arms'].median()),'max_arms':float(df['external_cdf_arms'].max())}
+    pd.DataFrame([overall]).to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_multiseed_external_summary.csv",index=False)
+    pd.DataFrame([overall]).to_csv(f"{ALL_THETA_COMPARISON_DIR}/all_theta_external_summary_overall.csv",index=False)
+    print(f"[v7.4-qcal-only] all-theta evaluation output dir = {ALL_THETA_COMPARISON_DIR}",flush=True)
+
+
+
+
+def _summarize_mc2500_df(df,out_dir):
+    Path(out_dir).mkdir(parents=True,exist_ok=True)
+    df=df.copy().drop_duplicates(subset=['theta_idx','seed']).sort_values(['seed','theta_idx']).reset_index(drop=True)
+    df.to_csv(f"{out_dir}/all_theta_multiseed_external_by_theta_seed.csv",index=False)
+    theta_rows=[]
+    for theta_idx,g in df.groupby('theta_idx'):
+        arms=g['external_cdf_arms'].astype(float)
+        theta_rows.append({'theta_idx':int(theta_idx),'n_seeds':int(len(g)),'mean_arms':float(arms.mean()),'median_arms':float(arms.median()),'max_arms':float(arms.max()),'min_arms':float(arms.min()),'q90_arms':float(arms.quantile(0.9)),'q95_arms':float(arms.quantile(0.95)),'std_arms':float(arms.std(ddof=0)),'mean_q50_abs_error':float(g['q50_error'].abs().mean()) if 'q50_error' in g else np.nan,'mean_q95_abs_error':float(g['q95_error'].abs().mean()) if 'q95_error' in g else np.nan,'mean_opf_per_sample_ms':float(g['opf_per_sample_ms'].mean()) if 'opf_per_sample_ms' in g else np.nan,'mean_nn_forward_ms':float(g['nn_forward_mean_ms'].mean()) if 'nn_forward_mean_ms' in g else np.nan})
+    pd.DataFrame(theta_rows).to_csv(f"{out_dir}/all_theta_multiseed_external_by_theta_summary.csv",index=False)
+    seed_rows=[]
+    for seed,g in df.groupby('seed'):
+        arms=g['external_cdf_arms'].astype(float); imax=arms.idxmax()
+        seed_rows.append({'seed':int(seed),'n_theta':int(len(g)),'mean_arms':float(arms.mean()),'median_arms':float(arms.median()),'max_arms':float(arms.max()),'min_arms':float(arms.min()),'q90_arms':float(arms.quantile(0.9)),'q95_arms':float(arms.quantile(0.95)),'std_arms':float(arms.std(ddof=0)),'worst_theta_idx':int(df.loc[imax,'theta_idx']),'worst_theta_arms':float(df.loc[imax,'external_cdf_arms'])})
+    pd.DataFrame(seed_rows).to_csv(f"{out_dir}/all_theta_multiseed_external_by_seed_summary.csv",index=False)
+    arms=df['external_cdf_arms'].astype(float)
+    overall={'n_total':int(len(df)),'n_seeds':int(df['seed'].nunique()),'n_theta':int(df['theta_idx'].nunique()),'mean_arms':float(arms.mean()),'median_arms':float(arms.median()),'q90_arms':float(arms.quantile(0.9)),'q95_arms':float(arms.quantile(0.95)),'max_arms':float(arms.max())}
+    pd.DataFrame([overall]).to_csv(f"{out_dir}/all_theta_multiseed_external_summary.csv",index=False)
+    pd.DataFrame([overall]).to_csv(f"{out_dir}/all_theta_external_summary_overall.csv",index=False)
+    worst=df.sort_values('external_cdf_arms',ascending=False).head(20)
+    worst.to_csv(f"{out_dir}/all_theta_external_worst20.csv",index=False)
+    threshold={'n_total':int(len(df)),'n_gt_3pct':int((arms>3.0).sum()),'n_gt_4pct':int((arms>4.0).sum()),'n_gt_5pct':int((arms>5.0).sum()),'rate_gt_3pct':float((arms>3.0).mean()),'rate_gt_4pct':float((arms>4.0).mean()),'rate_gt_5pct':float((arms>5.0).mean()),'mean_arms':float(arms.mean()),'median_arms':float(arms.median()),'q90_arms':float(arms.quantile(0.9)),'q95_arms':float(arms.quantile(0.95)),'max_arms':float(arms.max())}
+    pd.DataFrame([threshold]).to_csv(f"{out_dir}/all_theta_external_threshold_counts.csv",index=False)
+    return overall,threshold,worst
+
+def merge_existing_and_additional_mc2500_results():
+    Path(COMBINED_MC2500_DIR).mkdir(parents=True,exist_ok=True)
+    old_path=Path(EXISTING_MC2500_DIR)/'all_theta_multiseed_external_by_theta_seed.csv'
+    new_path=Path(ALL_THETA_COMPARISON_DIR)/'all_theta_multiseed_external_by_theta_seed.csv'
+    if not old_path.exists():
+        raise FileNotFoundError(f'missing existing seed=1..3 MC2500 results: {old_path}')
+    if not new_path.exists():
+        raise FileNotFoundError(f'missing additional seed=4..10 MC2500 results: {new_path}')
+    old=pd.read_csv(old_path); new=pd.read_csv(new_path)
+    combo=pd.concat([old,new],ignore_index=True).drop_duplicates(subset=['theta_idx','seed']).sort_values(['seed','theta_idx']).reset_index(drop=True)
+    overall,threshold,worst=_summarize_mc2500_df(combo,COMBINED_MC2500_DIR)
+    print(f"[v7.4.3] combined n_seeds = {overall['n_seeds']}",flush=True)
+    print(f"[v7.4.3] combined n_rows = {overall['n_total']}",flush=True)
+    print(f"[v7.4.3] mean ARMS = {overall['mean_arms']:.4f}",flush=True)
+    print(f"[v7.4.3] median ARMS = {overall['median_arms']:.4f}",flush=True)
+    print(f"[v7.4.3] q90 ARMS = {overall['q90_arms']:.4f}",flush=True)
+    print(f"[v7.4.3] q95 ARMS = {overall['q95_arms']:.4f}",flush=True)
+    print(f"[v7.4.3] max ARMS = {overall['max_arms']:.4f}",flush=True)
+    print(f"[v7.4.3] n/rate >3% = {threshold['n_gt_3pct']} / {threshold['rate_gt_3pct']:.4f}",flush=True)
+    print(f"[v7.4.3] n/rate >4% = {threshold['n_gt_4pct']} / {threshold['rate_gt_4pct']:.4f}",flush=True)
+    print(f"[v7.4.3] n/rate >5% = {threshold['n_gt_5pct']} / {threshold['rate_gt_5pct']:.4f}",flush=True)
+    print('[v7.4.3] worst 20 theta/seed rows:',flush=True)
+    print(worst[['theta_idx','seed','external_cdf_arms','q50_error']].to_string(index=False),flush=True)
+    return combo,overall,threshold,worst
+
+def main_v7_4_3_qcal_alltheta_mc2500_more_external_seeds():
+    print('[v7.4.3-qcal-alltheta-more-seeds] start',flush=True)
+    apply_v7_1_runtime_config()
+    global ALL_THETA_LIST, TRAIN_THETA_LIST, HARD_THETA_LIST, ALL_THETA_EVAL_SEEDS, ALL_THETA_EVAL_MC
+    ALL_THETA_LIST=list(range(N_THETA)); TRAIN_THETA_LIST=[]; HARD_THETA_LIST=[]
+    ALL_THETA_EVAL_SEEDS=list(range(4,11)); ALL_THETA_EVAL_MC=2500
+    assert BUILD_NEW_DATASET is False
+    assert DATASET_CACHE_MODE == 'load_only'
+    assert RUN_QUANTILE_CALIBRATION_TRAIN is False
+    assert RUN_ALL_THETA_TRAIN is False
+    assert RUN_ALL_THETA_EVAL is False
+    assert RUN_FLEX_SYNTHESIS is False
+    Path(ALL_THETA_COMPARISON_DIR).mkdir(parents=True,exist_ok=True); Path(COMBINED_MC2500_DIR).mkdir(parents=True,exist_ok=True)
+    case=build_ieee33_case(); data_dict=get_or_build_flex_dataset_cache(case)
+    check_qcal_alltheta_model_completeness()
+    model_map=load_existing_all_theta_models(case)
+    missing=[j for j in ALL_THETA_LIST if j not in model_map or model_map[j]['net'] is None]
+    print(f'[v7.4.3] missing theta list = {missing}',flush=True)
+    if missing:
+        raise RuntimeError(f'Missing qcal model_map entries for theta={missing}')
+    print('[v7.4.3] start additional external MC2500 evaluation: seeds=4..10, 12 theta, MC=2500',flush=True)
+    eval_all_theta_multiseed_v7style(case,data_dict,model_map)
+    write_qcal_alltheta_external_summary_aliases()
+    merge_existing_and_additional_mc2500_results()
+    print(f'[v7.4.3] additional output dir = {ALL_THETA_COMPARISON_DIR}',flush=True)
+    print(f'[v7.4.3] combined output dir = {COMBINED_MC2500_DIR}',flush=True)
+    print('[v7.4.3-qcal-alltheta-more-seeds] done',flush=True)
+
+if __name__ == '__main__':
+    main_v7_4_3_qcal_alltheta_mc2500_more_external_seeds()
