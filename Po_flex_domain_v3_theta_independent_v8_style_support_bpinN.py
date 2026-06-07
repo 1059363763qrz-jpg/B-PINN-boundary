@@ -2039,12 +2039,22 @@ def main():
 
 # ===== v15 theta-independent experiment =====
 PRINT_TRAIN_PROGRESS = True
-LOG_EVERY_EPOCH = 1
+LOG_FIRST_N_EPOCHS = 5
+LOG_EVERY_EPOCH = 10
+LOG_LAST_N_EPOCHS = 3
 LOG_EVERY_N_BATCHES = 20
 PRINT_BATCH_PROGRESS = False
 PRINT_PROGRESS_FLUSH = True
 RUN_FULL_OPF_EVAL = False
 RUN_FLEX_DOMAIN_PLOTS = False
+
+def should_print_epoch(ep, epochs):
+    ep1 = ep + 1
+    return (
+        ep1 <= LOG_FIRST_N_EPOCHS
+        or ep1 % LOG_EVERY_EPOCH == 0
+        or ep1 > epochs - LOG_LAST_N_EPOCHS
+    )
 
 def flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list):
     theta = float(theta_list[theta_idx])
@@ -2122,12 +2132,16 @@ def evaluate_single_theta_model(net, norm, XMU_scen, YH_theta_scen, theta_idx, t
         pred_cdf = gmm_cdf((grid-hm)/(hs+1e-9), w, mu, sigma)
         arms.append(100*np.sqrt(np.mean((pred_cdf-emp_cdf)**2)))
         for q in errs:
-            errs[q].append(float((hm + hs * gmm_quantile(q, w, mu, sigma)) - np.quantile(ys, q)))
+            q_pred_norm = float(np.asarray(gmm_quantile(q, w, mu, sigma)).reshape(-1)[0])
+            q_pred_phys = hm + hs * q_pred_norm
+            q_emp_phys = float(np.quantile(ys, q))
+            errs[q].append(q_pred_phys - q_emp_phys)
         pred_mean = hm + hs * float(np.sum(w*mu))
         pred_std = hs * float(np.sqrt(max(0.0, np.sum(w*(sigma**2 + mu**2)) - (np.sum(w*mu)**2))))
         me.append(pred_mean - float(np.mean(ys))); se.append(pred_std - float(np.std(ys)))
         if payload is None: payload=(grid, emp_cdf, pred_cdf)
     if save_cdf_path and payload is not None:
+        Path(save_cdf_path).parent.mkdir(parents=True, exist_ok=True)
         grid, emp_cdf, pred_cdf = payload
         plt.figure(figsize=(7,5), dpi=180)
         plt.plot(grid, emp_cdf, 'k-', lw=2, label='Empirical CDF')
@@ -2137,6 +2151,7 @@ def evaluate_single_theta_model(net, norm, XMU_scen, YH_theta_scen, theta_idx, t
     return dict(theta_idx=theta_idx, theta=theta, alpha=alpha, beta=beta, cdf_arms=float(np.mean(arms)) if arms else np.nan, q05_error=float(np.mean(errs[0.05])) if errs[0.05] else np.nan, q25_error=float(np.mean(errs[0.25])) if errs[0.25] else np.nan, q50_error=float(np.mean(errs[0.50])) if errs[0.50] else np.nan, q75_error=float(np.mean(errs[0.75])) if errs[0.75] else np.nan, q95_error=float(np.mean(errs[0.95])) if errs[0.95] else np.nan, q50_rmse=float(np.sqrt(np.mean(np.square(errs[0.50])))) if errs[0.50] else np.nan, mean_error=float(np.mean(me)) if me else np.nan, std_error=float(np.mean(se)) if se else np.nan, n_eval_scenarios=int(len(arms)))
 
 def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list):
+    Path(TRAINING_RESULT_DIR).mkdir(parents=True, exist_ok=True)
     d = flatten_single_theta_dataset(XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx, theta_list)
     rng=np.random.default_rng(SEED_TRAIN); n_scen=XMU.shape[0]; mc=YH.shape[1]
     perm=rng.permutation(n_scen); n_val=max(1,int(round(0.1*n_scen))); va=perm[-n_val:]; tr=perm[:-n_val]
@@ -2151,7 +2166,7 @@ def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx
     net=BayesSingleThetaGMM2SupportNet(XMU.shape[1],case,hidden=160,depth=3,prior_sigma=PRIOR_SIGMA,init_rho=INIT_RHO).to(DEVICE)
     opt=torch.optim.Adam(net.parameters(),lr=LR)
     print('[v15-theta-train-start]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'theta = {d["theta"]}', flush=True); print(f'alpha = {d["alpha"]}', flush=True); print(f'beta = {d["beta"]}', flush=True); print(f'epochs = {EPOCHS}', flush=True); print(f'train samples = {xmu_n.shape[0]}', flush=True); print(f'val samples = {int(va_mask.sum())}', flush=True); print(f'batch size = {BATCH_SIZE}', flush=True); print(f'device = {DEVICE}', flush=True); print(f'DATASET_CACHE_MODE = {DATASET_CACHE_MODE}', flush=True); print('training target = h_theta', flush=True); print('v8-style realization-conditioned physics = True', flush=True)
-    rows=[]; n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; t0=datetime.now()
+    rows=[]; n=xmu_n.shape[0]; nb=(n+BATCH_SIZE-1)//BATCH_SIZE; t0=datetime.now(); best_cdf=np.inf; best_ep=0; last_stat=None
     for ep in range(EPOCHS):
         ep0=datetime.now(); p=np.random.default_rng(SEED_TRAIN+ep).permutation(n); beta_kl=min(1.0,(ep+1)/max(1,KL_WARMUP_EPOCHS))*BETA_KL_MAX
         stat={k:0.0 for k in ['total','nll','boundary','dispatch','t','phys','support','kl']}
@@ -2176,10 +2191,20 @@ def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx
         for k in stat: stat[k]/=max(1,nb)
         val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=(f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png" if ep==EPOCHS-1 else None))
         elapsed=(datetime.now()-t0).total_seconds(); ep_sec=(datetime.now()-ep0).total_seconds(); eta=(EPOCHS-ep-1)*ep_sec
-        print(f"[v15-theta-train] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} stage=A lr={opt.param_groups[0]['lr']:.6g}", flush=True)
-        print(f"  loss: total={stat['total']:.6f} nll={stat['nll']:.6f} boundary={stat['boundary']:.6f} dispatch={stat['dispatch']:.6f} t={stat['t']:.6f} phys={stat['phys']:.6f} support={stat['support']:.6f} kl={stat['kl']:.6f}", flush=True)
-        print(f"  val: cdf_arms={val['cdf_arms']:.6f} q50_rmse={val['q50_rmse']:.6f} mean_error={val['mean_error']:.6f} std_error={val['std_error']:.6f}", flush=True)
-        rows.append({'epoch':ep+1,'stage':'A','lr':opt.param_groups[0]['lr'],'epoch_time_sec':ep_sec,'elapsed_sec':elapsed,'eta_sec':eta,'total_loss':stat['total'],'nll_loss':stat['nll'],'boundary_sup_loss':stat['boundary'],'dispatch_sup_loss':stat['dispatch'],'t_sup_loss':stat['t'],'phys_loss':stat['phys'],'support_consist_loss':stat['support'],'kl_loss':stat['kl'],'val_cdf_arms':val['cdf_arms'],'val_q50_rmse':val['q50_rmse'],'val_mean_error':val['mean_error'],'val_std_error':val['std_error']})
+        if np.isfinite(val['cdf_arms']) and val['cdf_arms'] < best_cdf:
+            best_cdf = float(val['cdf_arms']); best_ep = ep+1
+        warn_flag = (not np.isfinite(stat['total'])) or (not np.isfinite(val['cdf_arms']))
+        if should_print_epoch(ep, EPOCHS) or warn_flag:
+            pct = 100.0 * (ep+1) / max(1, EPOCHS)
+            bar_n = 20; fill = int(round(bar_n * (ep+1) / max(1, EPOCHS)))
+            bar = '[' + '#' * fill + '-' * (bar_n - fill) + ']'
+            if warn_flag:
+                print(f"[v15-theta-warning] theta_idx={theta_idx:02d} epoch={ep+1} non-finite metric detected", flush=True)
+            print(f"[v15-theta-train] theta_idx={theta_idx:02d} epoch {ep+1:03d}/{EPOCHS:03d} {pct:5.1f}% {bar} stage=A lr={opt.param_groups[0]['lr']:.6g} beta_kl={beta_kl:.6f}", flush=True)
+            print(f"  loss: total={stat['total']:.6f} nll={stat['nll']:.6f} boundary={stat['boundary']:.6f} dispatch={stat['dispatch']:.6f} t={stat['t']:.6f} phys={stat['phys']:.6f} support={stat['support']:.6f} kl_raw={stat['kl']:.6f} kl_weighted={(beta_kl*stat['kl']):.6f}", flush=True)
+            print(f"  val: cdf_arms={val['cdf_arms']:.6f} q50_rmse={val['q50_rmse']:.6f} mean_error={val['mean_error']:.6f} std_error={val['std_error']:.6f} best_cdf_arms={best_cdf:.6f} best_epoch={best_ep}", flush=True)
+        rows.append({'epoch':ep+1,'stage':'A','lr':opt.param_groups[0]['lr'],'epoch_time_sec':ep_sec,'elapsed_sec':elapsed,'eta_sec':eta,'total_loss':stat['total'],'nll_loss':stat['nll'],'boundary_sup_loss':stat['boundary'],'dispatch_sup_loss':stat['dispatch'],'t_sup_loss':stat['t'],'phys_loss':stat['phys'],'support_consist_loss':stat['support'],'kl_loss':stat['kl'],'beta_kl':beta_kl,'kl_raw_loss':stat['kl'],'kl_weighted_loss':beta_kl*stat['kl'],'best_val_cdf_arms_so_far':best_cdf,'best_epoch_so_far':best_ep,'val_cdf_arms':val['cdf_arms'],'val_q50_rmse':val['q50_rmse'],'val_mean_error':val['mean_error'],'val_std_error':val['std_error']})
+        last_stat = (stat.copy(), beta_kl)
     Path(TRAINING_RESULT_DIR).mkdir(parents=True,exist_ok=True)
     tag=f"theta_independent_theta{theta_idx:02d}"
     model_path=f"{TRAINING_RESULT_DIR}/{tag}_model.pt"; norm_path=f"{TRAINING_RESULT_DIR}/{tag}_norm.pkl"; cfg_path=f"{TRAINING_RESULT_DIR}/{tag}_config.json"; log_path=f"{TRAINING_RESULT_DIR}/{tag}_training_log.csv"; val_path=f"{TRAINING_RESULT_DIR}/{tag}_val_metrics.csv"
@@ -2189,7 +2214,9 @@ def train_single_theta_model(case, XMU, XREAL, YH, YP0, YQ0, YPG, YQG, theta_idx
     pd.DataFrame(rows).to_csv(log_path,index=False)
     final_val=evaluate_single_theta_model(net,norm,d['XMU_scen'][va],d['YH_theta_scen'][va],theta_idx,theta_list,save_cdf_path=f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png")
     pd.DataFrame([final_val]).to_csv(val_path,index=False)
-    print('[v15-theta-train-finished]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'total epochs = {EPOCHS}', flush=True); print(f'total training time = {(datetime.now()-t0).total_seconds():.2f}', flush=True); print(f'saved model path = {model_path}', flush=True); print(f'saved norm path = {norm_path}', flush=True); print(f'saved config path = {cfg_path}', flush=True); print(f'saved training log path = {log_path}', flush=True); print(f'saved val metrics path = {val_path}', flush=True)
+    final_stat, final_beta = last_stat if last_stat is not None else ({'total':np.nan,'nll':np.nan,'phys':np.nan,'kl':np.nan}, np.nan)
+    cdf_path = f"{TRAINING_RESULT_DIR}/CDF_theta_independent_theta{theta_idx:02d}_v15.png"
+    print('[v15-theta-train-finished]', flush=True); print(f'theta_idx = {theta_idx}', flush=True); print(f'total epochs = {EPOCHS}', flush=True); print(f'best val cdf_arms = {best_cdf}', flush=True); print(f'best epoch = {best_ep}', flush=True); print(f'final val cdf_arms = {final_val["cdf_arms"]}', flush=True); print(f'final q50_rmse = {final_val["q50_rmse"]}', flush=True); print(f'final total loss = {final_stat["total"]}', flush=True); print(f'final nll loss = {final_stat["nll"]}', flush=True); print(f'final phys loss = {final_stat["phys"]}', flush=True); print(f'final raw kl loss = {final_stat["kl"]}', flush=True); print(f'final weighted kl loss = {final_beta*final_stat["kl"]}', flush=True); print(f'saved model path = {model_path}', flush=True); print(f'saved norm path = {norm_path}', flush=True); print(f'saved config path = {cfg_path}', flush=True); print(f'saved training log path = {log_path}', flush=True); print(f'saved val metrics path = {val_path}', flush=True); print(f'saved cdf path = {cdf_path}', flush=True)
     return final_val
 
 def train_theta_independent_models(case, XMU, XREAL, THETA_FEAT, YH, YP0, YQ0, YPG, YQG, theta_list):
@@ -2217,7 +2244,9 @@ def combine_theta_independent_flex_domain(case, XMU, YH, theta_list):
         with torch.no_grad(): _,w,mu,sigma=net.forward_gmm_single(xt,sample=False)
         w=w.cpu().numpy().reshape(-1); mu=mu.cpu().numpy().reshape(-1); sigma=sigma.cpu().numpy().reshape(-1)
         hm,hs=float(norm['h_mean'][0,0]),float(norm['h_std'][0,0])
-        for q in hq: hq[q].append(hm+hs*gmm_quantile(q,w,mu,sigma))
+        for q in hq:
+            q_pred_norm = float(np.asarray(gmm_quantile(q, w, mu, sigma)).reshape(-1)[0])
+            hq[q].append(float(hm + hs * q_pred_norm))
     polys={q:support_values_to_polygon(theta_list,np.array(v,dtype=float)) for q,v in hq.items()}
     for q,p in polys.items():
         if p is None or len(p)<3: print(f'[v15-combine] warning: invalid polygon q={q}', flush=True)
@@ -2235,7 +2264,9 @@ def combine_theta_independent_flex_domain(case, XMU, YH, theta_list):
                 x,y=close(p); plt.plot(x,y,'--',color=c,lw=1.5,label=f'MC q{int(q*100):02d}')
     plt.title('theta-independent v8-style support BPINN')
     plt.axis('equal'); plt.grid(alpha=0.2); plt.legend(); plt.tight_layout()
-    out=f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"; plt.savefig(out,dpi=240); plt.close()
+    out=f"{TRAINING_RESULT_DIR}/FlexDomain_theta_independent_q05_q50_q95_v15.png"
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out,dpi=240); plt.close()
     return out
 
 def write_visualization_manifest_theta_independent_v15():
